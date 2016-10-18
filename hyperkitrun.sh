@@ -8,9 +8,10 @@ INITRD="test/initrd.gz"
 CMDLINE="earlyprintk=serial console=ttyS0"
 
 # FreeBSD
-#USERBOOT="test/userboot.so"
+USERBOOT="test/userboot.so"
 #BOOTVOLUME="/somepath/somefile.{img | iso}"
-#KERNELENV=""
+BOOTVOLUME=picobsd.bin
+KERNELENV=""
 
 MEM="-m 1G"
 #SMP="-c 2"
@@ -30,13 +31,14 @@ if [ ! -x  "$HYPERKIT" ]; then
   fi
 fi
 
+build/com.docker.hyperkit $ACPI $MEM $SMP $PCI_DEV $LPC_DEV $NET $IMG_CD $IMG_HDD $UUID -f fbsd,$USERBOOT,$BOOTVOLUME,"$KERNELENV"
+
 # Linux
 if [ ! -f "$KERNEL" ]; then
  pushd test
  ./tinycore.sh
  popd
 fi
-build/com.docker.hyperkit $ACPI $MEM $SMP $PCI_DEV $LPC_DEV $NET $IMG_CD $IMG_HDD $UUID -f kexec,$KERNEL,$INITRD,"$CMDLINE"
+#build/com.docker.hyperkit $ACPI $MEM $SMP $PCI_DEV $LPC_DEV $NET $IMG_CD $IMG_HDD $UUID -f kexec,$KERNEL,$INITRD,"$CMDLINE"
 
 # FreeBSD
-#build/com.docker.hyperkit $ACPI $MEM $SMP $PCI_DEV $LPC_DEV $NET $IMG_CD $IMG_HDD $UUID -f fbsd,$USERBOOT,$BOOTVOLUME,"$KERNELENV"
