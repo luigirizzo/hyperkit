@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,15 +26,19 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+
 #include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/inout.h>
-#include <xhyve/pci_lpc.h>
+
+#include "inout.h"
+#include "pci_lpc.h"
 
 static int
-post_data_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes,
-	uint32_t *eax, UNUSED void *arg)
+post_data_handler(struct vmctx *ctx, int vcpu, int in, int port, int bytes,
+		  uint32_t *eax, void *arg)
 {
 	assert(in == 1);
 

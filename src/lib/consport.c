@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,20 +26,23 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+#include <sys/select.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <termios.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include <sys/types.h>
-#include <sys/select.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/inout.h>
-#include <xhyve/pci_lpc.h>
 
-#define	BVM_CONSOLE_PORT 0x220
-#define	BVM_CONS_SIG ('b' << 8 | 'v')
+#include "inout.h"
+#include "pci_lpc.h"
+
+#define	BVM_CONSOLE_PORT	0x220
+#define	BVM_CONS_SIG		('b' << 8 | 'v')
 
 static struct termios tio_orig, tio_new;
 
@@ -56,7 +58,7 @@ ttyopen(void)
 	tcgetattr(STDIN_FILENO, &tio_orig);
 
 	cfmakeraw(&tio_new);
-	tcsetattr(STDIN_FILENO, TCSANOW, &tio_new);
+	tcsetattr(STDIN_FILENO, TCSANOW, &tio_new);	
 
 	atexit(ttyclose);
 }
@@ -64,15 +66,14 @@ ttyopen(void)
 static bool
 tty_char_available(void)
 {
-	fd_set rfds;
-	struct timeval tv;
+        fd_set rfds;
+        struct timeval tv;
 
-	FD_ZERO(&rfds);
-	FD_SET(STDIN_FILENO, &rfds);
-	tv.tv_sec = 0;
-	tv.tv_usec = 0;
-
-	if (select(STDIN_FILENO + 1, &rfds, NULL, NULL, &tv) > 0) {
+        FD_ZERO(&rfds);
+        FD_SET(STDIN_FILENO, &rfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        if (select(STDIN_FILENO + 1, &rfds, NULL, NULL, &tv) > 0) {
 		return (true);
 	} else {
 		return (false);
@@ -99,8 +100,8 @@ ttywrite(unsigned char wb)
 }
 
 static int
-console_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes,
-	uint32_t *eax, UNUSED void *arg)
+console_handler(struct vmctx *ctx, int vcpu, int in, int port, int bytes,
+		uint32_t *eax, void *arg)
 {
 	static int opened;
 
@@ -125,11 +126,11 @@ console_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes,
 		ttyopen();
 		opened = 1;
 	}
-
+	
 	if (in)
-		*eax = (uint32_t) ttyread();
+		*eax = ttyread();
 	else
-		ttywrite((unsigned char) *eax);
+		ttywrite(*eax);
 
 	return (0);
 }
@@ -141,12 +142,12 @@ static struct inout_port consport = {
 	BVM_CONSOLE_PORT,
 	1,
 	IOPORT_F_INOUT,
-	console_handler,
-	NULL
+	console_handler
 };
 
 void
 init_bvmcons(void)
 {
+
 	register_inout(&consport);
 }

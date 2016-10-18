@@ -26,10 +26,8 @@
  * $FreeBSD$
  */
 
-#pragma once
-
-#include <stdint.h>
-#include <pthread.h>
+#ifndef	_VIRTIO_H_
+#define	_VIRTIO_H_
 
 /*
  * These are derived from several virtio specifications.
@@ -127,39 +125,34 @@
 #define VRING_DESC_F_WRITE	(1 << 1)
 #define VRING_DESC_F_INDIRECT	(1 << 2)
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpacked"
-
-struct virtio_desc { /* AKA vring_desc */
-	uint64_t vd_addr; /* guest physical address */
-	uint32_t vd_len; /* length of scatter/gather seg */
-	uint16_t vd_flags; /* VRING_F_DESC_* */
-	uint16_t vd_next; /* next desc if F_NEXT */
+struct virtio_desc {			/* AKA vring_desc */
+	uint64_t	vd_addr;	/* guest physical address */
+	uint32_t	vd_len;		/* length of scatter/gather seg */
+	uint16_t	vd_flags;	/* VRING_F_DESC_* */
+	uint16_t	vd_next;	/* next desc if F_NEXT */
 } __packed;
 
-struct virtio_used { /* AKA vring_used_elem */
-	uint32_t vu_idx; /* head of used descriptor chain */
-	uint32_t vu_tlen; /* length written-to */
+struct virtio_used {			/* AKA vring_used_elem */
+	uint32_t	vu_idx;		/* head of used descriptor chain */
+	uint32_t	vu_tlen;	/* length written-to */
 } __packed;
 
 #define VRING_AVAIL_F_NO_INTERRUPT   1
 
 struct vring_avail {
-	uint16_t va_flags; /* VRING_AVAIL_F_* */
-	uint16_t va_idx; /* counts to 65535, then cycles */
-	uint16_t va_ring[]; /* size N, reported in QNUM value */
-/*	uint16_t va_used_event; -- after N ring entries */
+	uint16_t	va_flags;	/* VRING_AVAIL_F_* */
+	uint16_t	va_idx;		/* counts to 65535, then cycles */
+	uint16_t	va_ring[];	/* size N, reported in QNUM value */
+/*	uint16_t	va_used_event;	-- after N ring entries */
 } __packed;
 
 #define	VRING_USED_F_NO_NOTIFY		1
 struct vring_used {
-	uint16_t vu_flags; /* VRING_USED_F_* */
-	uint16_t vu_idx; /* counts to 65535, then cycles */
-	struct virtio_used vu_ring[]; /* size N */
-/*	uint16_t vu_avail_event; -- after N ring entries */
+	uint16_t	vu_flags;	/* VRING_USED_F_* */
+	uint16_t	vu_idx;		/* counts to 65535, then cycles */
+	struct virtio_used vu_ring[];	/* size N */
+/*	uint16_t	vu_avail_event;	-- after N ring entries */
 } __packed;
-
-#pragma clang diagnostic pop
 
 /*
  * The address of any given virtual queue is determined by a single
@@ -207,7 +200,6 @@ struct vring_used {
 #define	VIRTIO_TYPE_RPMSG	7
 #define	VIRTIO_TYPE_SCSI	8
 #define	VIRTIO_TYPE_9P		9
-#define VIRTIO_TYPE_SOCK	19
 
 /* experimental IDs start at 65535 and work down */
 
@@ -218,8 +210,6 @@ struct vring_used {
 #define	VIRTIO_DEV_NET		0x1000
 #define	VIRTIO_DEV_BLOCK	0x1001
 #define	VIRTIO_DEV_RANDOM	0x1002
-#define VIRTIO_DEV_9P		0x1009
-#define VIRTIO_DEV_SOCK		0x103f /* In the legacy range. */
 
 /*
  * PCI config space constants.
@@ -279,15 +269,16 @@ vring_size(u_int qsz)
 
 	/* constant 3 below = va_flags, va_idx, va_used_event */
 	size = sizeof(struct virtio_desc) * qsz + sizeof(uint16_t) * (3 + qsz);
-	size = roundup2(size, ((size_t) VRING_ALIGN));
+	size = roundup2(size, VRING_ALIGN);
 
 	/* constant 3 below = vu_flags, vu_idx, vu_avail_event */
 	size += sizeof(uint16_t) * 3 + sizeof(struct virtio_used) * qsz;
-	size = roundup2(size, ((size_t) VRING_ALIGN));
+	size = roundup2(size, VRING_ALIGN);
 
 	return (size);
 }
 
+struct vmctx;
 struct pci_devinst;
 struct vqueue_info;
 
@@ -325,53 +316,45 @@ struct vqueue_info;
 #define	VIRTIO_EVENT_IDX	0x02	/* use the event-index values */
 #define	VIRTIO_BROKED		0x08	/* ??? */
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
-
 struct virtio_softc {
-	struct virtio_consts *vs_vc; /* constants (see below) */
-	int vs_flags; /* VIRTIO_* flags from above */
-	pthread_mutex_t *vs_mtx; /* POSIX mutex, if any */
-	struct pci_devinst *vs_pi; /* PCI device instance */
-	uint32_t vs_negotiated_caps; /* negotiated capabilities */
-	struct vqueue_info *vs_queues; /* one per vc_nvq */
-	int vs_curq; /* current queue */
-	uint8_t vs_status; /* value from last status write */
-	uint8_t vs_isr; /* ISR flags, if not MSI-X */
-	uint16_t vs_msix_cfg_idx; /* MSI-X vector for config event */
+	struct virtio_consts *vs_vc;	/* constants (see below) */
+	int	vs_flags;		/* VIRTIO_* flags from above */
+	pthread_mutex_t *vs_mtx;	/* POSIX mutex, if any */
+	struct pci_devinst *vs_pi;	/* PCI device instance */
+	uint32_t vs_negotiated_caps;	/* negotiated capabilities */
+	struct vqueue_info *vs_queues;	/* one per vc_nvq */
+	int	vs_curq;		/* current queue */
+	uint8_t	vs_status;		/* value from last status write */
+	uint8_t	vs_isr;			/* ISR flags, if not MSI-X */
+	uint16_t vs_msix_cfg_idx;	/* MSI-X vector for config event */
 };
 
-#define	VS_LOCK(vs) \
-do { \
-	if (vs->vs_mtx) \
-		pthread_mutex_lock(vs->vs_mtx); \
+#define	VS_LOCK(vs)							\
+do {									\
+	if (vs->vs_mtx)							\
+		pthread_mutex_lock(vs->vs_mtx);				\
 } while (0)
 
-#define	VS_UNLOCK(vs) \
-do { \
-	if (vs->vs_mtx) \
-		pthread_mutex_unlock(vs->vs_mtx); \
+#define	VS_UNLOCK(vs)							\
+do {									\
+	if (vs->vs_mtx)							\
+		pthread_mutex_unlock(vs->vs_mtx);			\
 } while (0)
 
 struct virtio_consts {
-	/* name of driver (for diagnostics) */
-	const char *vc_name;
-	/* number of virtual queues */
-	int vc_nvq;
-	/* size of dev-specific config regs */
-	size_t vc_cfgsize;
-	/* called on virtual device reset */
-	void (*vc_reset)(void *);
-	/* called on QNOTIFY if no VQ notify */
-	void (*vc_qnotify)(void *, struct vqueue_info *);
-	/* called to read config regs */
-	int (*vc_cfgread)(void *, int, int, uint32_t *);
-	/* called to write config regs */
-	int (*vc_cfgwrite)(void *, int, int, uint32_t);
-	/* called to apply negotiated features */
-	void (*vc_apply_features)(void *, uint64_t);
-	/* hypervisor-provided capabilities */
-	uint64_t vc_hv_caps;
+	const char *vc_name;		/* name of driver (for diagnostics) */
+	int	vc_nvq;			/* number of virtual queues */
+	size_t	vc_cfgsize;		/* size of dev-specific config regs */
+	void	(*vc_reset)(void *);	/* called on virtual device reset */
+	void	(*vc_qnotify)(void *, struct vqueue_info *);
+					/* called on QNOTIFY if no VQ notify */
+	int	(*vc_cfgread)(void *, int, int, uint32_t *);
+					/* called to read config regs */
+	int	(*vc_cfgwrite)(void *, int, int, uint32_t);
+					/* called to write config regs */
+	void    (*vc_apply_features)(void *, uint64_t);
+				/* called to apply negotiated features */
+	uint64_t vc_hv_caps;		/* hypervisor-provided capabilities */
 };
 
 /*
@@ -394,34 +377,25 @@ struct virtio_consts {
 #define	VQ_ALLOC	0x01	/* set once we have a pfn */
 #define	VQ_BROKED	0x02	/* ??? */
 struct vqueue_info {
-	/* size of this queue (a power of 2) */
-	uint16_t vq_qsize;
-	/* called instead of vc_notify, if not NULL */
-	void (*vq_notify)(void *, struct vqueue_info *);
-	/* backpointer to softc */
-	struct virtio_softc *vq_vs;
-	/* we're the num'th queue in the softc */
-	uint16_t vq_num;
-	/* flags (see above) */
-	uint16_t vq_flags;
-	/* a recent value of vq_avail->va_idx */
-	uint16_t vq_last_avail;
-	/* saved vq_used->vu_idx; see vq_endchains */
-	uint16_t vq_save_used;
-	/* MSI-X index, or VIRTIO_MSI_NO_VECTOR */
-	uint16_t vq_msix_idx;
-	/* PFN of virt queue (not shifted!) */
-	uint32_t vq_pfn;
-	/* descriptor array */
-	volatile struct virtio_desc *vq_desc;
-	/* the "avail" ring */
-	volatile struct vring_avail *vq_avail;
-	/* the "used" ring */
-	volatile struct vring_used *vq_used;
+	uint16_t vq_qsize;	/* size of this queue (a power of 2) */
+	void	(*vq_notify)(void *, struct vqueue_info *);
+				/* called instead of vc_notify, if not NULL */
+
+	struct virtio_softc *vq_vs;	/* backpointer to softc */
+	uint16_t vq_num;	/* we're the num'th queue in the softc */
+
+	uint16_t vq_flags;	/* flags (see above) */
+	uint16_t vq_last_avail;	/* a recent value of vq_avail->va_idx */
+	uint16_t vq_save_used;	/* saved vq_used->vu_idx; see vq_endchains */
+	uint16_t vq_msix_idx;	/* MSI-X index, or VIRTIO_MSI_NO_VECTOR */
+
+	uint32_t vq_pfn;	/* PFN of virt queue (not shifted!) */
+
+	volatile struct virtio_desc *vq_desc;	/* descriptor array */
+	volatile struct vring_avail *vq_avail;	/* the "avail" ring */
+	volatile struct vring_used *vq_used;	/* the "used" ring */
+
 };
-
-#pragma clang diagnostic pop
-
 /* as noted above, these are sort of backwards, name-wise */
 #define VQ_AVAIL_EVENT_IDX(vq) \
 	(*(volatile uint16_t *)&(vq)->vq_used->vu_ring[(vq)->vq_qsize])
@@ -434,6 +408,7 @@ struct vqueue_info {
 static inline int
 vq_ring_ready(struct vqueue_info *vq)
 {
+
 	return (vq->vq_flags & VQ_ALLOC);
 }
 
@@ -444,6 +419,7 @@ vq_ring_ready(struct vqueue_info *vq)
 static inline int
 vq_has_descs(struct vqueue_info *vq)
 {
+
 	return (vq_ring_ready(vq) && vq->vq_last_avail !=
 	    vq->vq_avail->va_idx);
 }
@@ -455,6 +431,7 @@ vq_has_descs(struct vqueue_info *vq)
 static inline void
 vq_interrupt(struct virtio_softc *vs, struct vqueue_info *vq)
 {
+
 	if (pci_msix_enabled(vs->vs_pi))
 		pci_generate_msix(vs->vs_pi, vq->vq_msix_idx);
 	else {
@@ -467,17 +444,21 @@ vq_interrupt(struct virtio_softc *vs, struct vqueue_info *vq)
 }
 
 struct iovec;
-void vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
-	void *dev_softc, struct pci_devinst *pi, struct vqueue_info *queues);
-int vi_intr_init(struct virtio_softc *vs, int barnum, int use_msix);
-void vi_reset_dev(struct virtio_softc *);
-void vi_set_io_bar(struct virtio_softc *, int);
-int vq_getchain(struct vqueue_info *vq, uint16_t *pidx, struct iovec *iov,
-	int n_iov, uint16_t *flags);
-void vq_retchain(struct vqueue_info *vq);
-void vq_relchain(struct vqueue_info *vq, uint16_t idx, uint32_t iolen);
-void vq_endchains(struct vqueue_info *vq, int used_all_avail);
-uint64_t vi_pci_read(int vcpu, struct pci_devinst *pi, int baridx,
-	uint64_t offset, int size);
-void vi_pci_write(int vcpu, struct pci_devinst *pi, int baridx, uint64_t offset,
-	int size, uint64_t value);
+void	vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
+			void *dev_softc, struct pci_devinst *pi,
+			struct vqueue_info *queues);
+int	vi_intr_init(struct virtio_softc *vs, int barnum, int use_msix);
+void	vi_reset_dev(struct virtio_softc *);
+void	vi_set_io_bar(struct virtio_softc *, int);
+
+int	vq_getchain(struct vqueue_info *vq, uint16_t *pidx,
+		    struct iovec *iov, int n_iov, uint16_t *flags);
+void	vq_retchain(struct vqueue_info *vq);
+void	vq_relchain(struct vqueue_info *vq, uint16_t idx, uint32_t iolen);
+void	vq_endchains(struct vqueue_info *vq, int used_all_avail);
+
+uint64_t vi_pci_read(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
+		     int baridx, uint64_t offset, int size);
+void	vi_pci_write(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
+		     int baridx, uint64_t offset, int size, uint64_t value);
+#endif	/* _VIRTIO_H_ */

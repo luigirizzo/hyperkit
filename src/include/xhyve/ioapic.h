@@ -27,10 +27,13 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _IOAPIC_H_
+#define	_IOAPIC_H_
 
 /*
  * Allocate a PCI IRQ from the I/O APIC.
  */
-void ioapic_init(void);
-int ioapic_pci_alloc_irq(void);
+void	ioapic_init(struct vmctx *ctx);
+int	ioapic_pci_alloc_irq(void);
+
+#endif

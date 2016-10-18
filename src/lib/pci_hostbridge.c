@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,12 +26,15 @@
  * $FreeBSD$
  */
 
-#include <xhyve/support/misc.h>
-#include <xhyve/pci_emul.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include "pci_emul.h"
 
 static int
-pci_hostbridge_init(struct pci_devinst *pi, UNUSED char *opts)
+pci_hostbridge_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 {
+
 	/* config space */
 	pci_set_cfgdata16(pi, PCIR_VENDOR, 0x1275);	/* NetApp */
 	pci_set_cfgdata16(pi, PCIR_DEVICE, 0x1275);	/* NetApp */
@@ -46,22 +48,22 @@ pci_hostbridge_init(struct pci_devinst *pi, UNUSED char *opts)
 }
 
 static int
-pci_amd_hostbridge_init(struct pci_devinst *pi, char *opts)
+pci_amd_hostbridge_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 {
-	(void) pci_hostbridge_init(pi, opts);
+	(void) pci_hostbridge_init(ctx, pi, opts);
 	pci_set_cfgdata16(pi, PCIR_VENDOR, 0x1022);	/* AMD */
 	pci_set_cfgdata16(pi, PCIR_DEVICE, 0x7432);	/* made up */
 
 	return (0);
 }
 
-static struct pci_devemu pci_de_amd_hostbridge = {
+struct pci_devemu pci_de_amd_hostbridge = {
 	.pe_emu = "amd_hostbridge",
 	.pe_init = pci_amd_hostbridge_init,
 };
 PCI_EMUL_SET(pci_de_amd_hostbridge);
 
-static struct pci_devemu pci_de_hostbridge = {
+struct pci_devemu pci_de_hostbridge = {
 	.pe_emu = "hostbridge",
 	.pe_init = pci_hostbridge_init,
 };

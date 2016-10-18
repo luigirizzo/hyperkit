@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,18 +26,27 @@
  * $FreeBSD$
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <sys/linker_set.h>
+#include <sys/_iovec.h>
+#include <sys/mman.h>
+
+#include <x86/psl.h>
+#include <x86/segments.h>
+
+#include <machine/vmm.h>
+#include <machine/vmm_instruction_emul.h>
+#include <vmmapi.h>
+
 #include <stdio.h>
 #include <string.h>
-#include <errno.h>
 #include <assert.h>
-#include <sys/uio.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/linker_set.h>
-#include <xhyve/support/psl.h>
-#include <xhyve/support/segments.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/inout.h>
+
+#include "bhyverun.h"
+#include "inout.h"
 
 SET_DECLARE(inout_port_set, struct inout_port);
 
@@ -47,84 +55,53 @@ SET_DECLARE(inout_port_set, struct inout_port);
 #define	VERIFY_IOPORT(port, size) \
 	assert((port) >= 0 && (size) > 0 && ((port) + (size)) <= MAX_IOPORTS)
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 static struct {
-	const char *name;
-	int flags;
-	inout_func_t handler;
-	void *arg;
+	const char	*name;
+	int		flags;
+	inout_func_t	handler;
+	void		*arg;
 } inout_handlers[MAX_IOPORTS];
-#pragma clang diagnostic pop
 
 static int
-default_inout(UNUSED int vcpu, int in, UNUSED int port, int bytes,
-	uint32_t *eax, UNUSED void *arg)
+default_inout(struct vmctx *ctx, int vcpu, int in, int port, int bytes,
+              uint32_t *eax, void *arg)
 {
-	if (in) {
-		switch (bytes) {
-		case 4:
-			*eax = 0xffffffff;
-			break;
-		case 2:
-			*eax = 0xffff;
-			break;
-		case 1:
-			*eax = 0xff;
-			break;
-		}
-	}
-
-	return (0);
+        if (in) {
+                switch (bytes) {
+                case 4:
+                        *eax = 0xffffffff;
+                        break;
+                case 2:
+                        *eax = 0xffff;
+                        break;
+                case 1:
+                        *eax = 0xff;
+                        break;
+                }
+        }
+        
+        return (0);
 }
 
-static void
+static void 
 register_default_iohandler(int start, int size)
 {
 	struct inout_port iop;
-
+	
 	VERIFY_IOPORT(start, size);
 
 	bzero(&iop, sizeof(iop));
 	iop.name = "default";
 	iop.port = start;
 	iop.size = size;
-	iop.flags = (int) (IOPORT_F_INOUT | IOPORT_F_DEFAULT);
+	iop.flags = IOPORT_F_INOUT | IOPORT_F_DEFAULT;
 	iop.handler = default_inout;
 
 	register_inout(&iop);
 }
 
-static int
-update_register(int vcpuid, enum vm_reg_name reg,
-	uint64_t val, int size)
-{
-	int error;
-	uint64_t origval;
-
-	switch (size) {
-	case 1:
-	case 2:
-		error = xh_vm_get_register(vcpuid, reg, &origval);
-		if (error)
-			return (error);
-		val &= vie_size2mask(size);
-		val |= origval & ~vie_size2mask(size);
-		break;
-	case 4:
-		val &= 0xffffffffUL;
-		break;
-	case 8:
-		break;
-	default:
-		return (EINVAL);
-	}
-
-	return xh_vm_set_register(vcpuid, reg, val);
-}
-
 int
-emulate_inout(int vcpu, struct vm_exit *vmexit, int strict)
+emulate_inout(struct vmctx *ctx, int vcpu, struct vm_exit *vmexit, int strict)
 {
 	int addrsize, bytes, flags, in, port, prot, rep;
 	uint32_t eax, val;
@@ -164,7 +141,7 @@ emulate_inout(int vcpu, struct vm_exit *vmexit, int strict)
 		vis = &vmexit->u.inout_str;
 		rep = vis->inout.rep;
 		addrsize = vis->addrsize;
-		prot = in ? XHYVE_PROT_WRITE : XHYVE_PROT_READ;
+		prot = in ? PROT_WRITE : PROT_READ;
 		assert(addrsize == 2 || addrsize == 4 || addrsize == 8);
 
 		/* Index register */
@@ -175,18 +152,18 @@ emulate_inout(int vcpu, struct vm_exit *vmexit, int strict)
 		count = vis->count & vie_size2mask(addrsize);
 
 		/* Limit number of back-to-back in/out emulations to 16 */
-		iterations = min(count, 16);
+		iterations = MIN(count, 16);
 		while (iterations > 0) {
 			assert(retval == 0);
 			if (vie_calculate_gla(vis->paging.cpu_mode,
 			    vis->seg_name, &vis->seg_desc, index, bytes,
 			    addrsize, prot, &gla)) {
-				vm_inject_gp(vcpu);
+				vm_inject_gp(ctx, vcpu);
 				break;
 			}
 
-			error = xh_vm_copy_setup(vcpu, &vis->paging, gla,
-			    ((size_t) bytes), prot, iov, nitems(iov), &fault);
+			error = vm_copy_setup(ctx, vcpu, &vis->paging, gla,
+			    bytes, prot, iov, nitems(iov), &fault);
 			if (error) {
 				retval = -1;  /* Unrecoverable error */
 				break;
@@ -197,33 +174,33 @@ emulate_inout(int vcpu, struct vm_exit *vmexit, int strict)
 
 			if (vie_alignment_check(vis->paging.cpl, bytes,
 			    vis->cr0, vis->rflags, gla)) {
-				vm_inject_ac(vcpu, 0);
+				vm_inject_ac(ctx, vcpu, 0);
 				break;
 			}
 
 			val = 0;
 			if (!in)
-				xh_vm_copyin(iov, &val, ((size_t) bytes));
+				vm_copyin(ctx, vcpu, iov, &val, bytes);
 
-			retval = handler(vcpu, in, port, bytes, &val, arg);
+			retval = handler(ctx, vcpu, in, port, bytes, &val, arg);
 			if (retval != 0)
 				break;
 
 			if (in)
-				xh_vm_copyout(&val, iov, ((size_t) bytes));
+				vm_copyout(ctx, vcpu, &val, iov, bytes);
 
 			/* Update index */
 			if (vis->rflags & PSL_D)
-				index -= ((uint64_t) bytes);
+				index -= bytes;
 			else
-				index += ((uint64_t) bytes);
+				index += bytes;
 
 			count--;
 			iterations--;
 		}
 
 		/* Update index register */
-		error = update_register(vcpu, idxreg, index, addrsize);
+		error = vie_update_register(ctx, vcpu, idxreg, index, addrsize);
 		assert(error == 0);
 
 		/*
@@ -231,23 +208,25 @@ emulate_inout(int vcpu, struct vm_exit *vmexit, int strict)
 		 * prefix.
 		 */
 		if (rep) {
-			error = update_register(vcpu, VM_REG_GUEST_RCX, count, addrsize);
+			error = vie_update_register(ctx, vcpu, VM_REG_GUEST_RCX,
+			    count, addrsize);
 			assert(error == 0);
 		}
 
 		/* Restart the instruction if more iterations remain */
 		if (retval == 0 && count != 0) {
-			error = xh_vm_restart_instruction(vcpu);
+			error = vm_restart_instruction(ctx, vcpu);
 			assert(error == 0);
 		}
 	} else {
 		eax = vmexit->u.inout.eax;
 		val = eax & vie_size2mask(bytes);
-		retval = handler(vcpu, in, port, bytes, &val, arg);
+		retval = handler(ctx, vcpu, in, port, bytes, &val, arg);
 		if (retval == 0 && in) {
 			eax &= ~vie_size2mask(bytes);
 			eax |= val & vie_size2mask(bytes);
-			error = xh_vm_set_register(vcpu, VM_REG_GUEST_RAX, eax);
+			error = vm_set_register(ctx, vcpu, VM_REG_GUEST_RAX,
+			    eax);
 			assert(error == 0);
 		}
 	}
@@ -288,9 +267,9 @@ register_inout(struct inout_port *iop)
 	 * Verify that the new registration is not overwriting an already
 	 * allocated i/o range.
 	 */
-	if ((((unsigned) iop->flags) & IOPORT_F_DEFAULT) == 0) {
+	if ((iop->flags & IOPORT_F_DEFAULT) == 0) {
 		for (i = iop->port; i < iop->port + iop->size; i++) {
-			if ((((unsigned) inout_handlers[i].flags) & IOPORT_F_DEFAULT) == 0)
+			if ((inout_handlers[i].flags & IOPORT_F_DEFAULT) == 0)
 				return (-1);
 		}
 	}

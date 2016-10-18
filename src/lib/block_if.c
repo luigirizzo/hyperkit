@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2013  Peter Grehan <grehan@freebsd.org>
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,6 +26,9 @@
  * $FreeBSD$
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/errno.h>
@@ -40,28 +42,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <pthread_np.h>
 #include <signal.h>
 #include <unistd.h>
 
-#include <xhyve/support/atomic.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/mevent.h>
-#include <xhyve/block_if.h>
-#include <xhyve/dtrace.h>
+#include <machine/atomic.h>
 
-#include "mirage_block_c.h"
+#include "bhyverun.h"
+#include "mevent.h"
+#include "block_if.h"
 
-#define BLOCKIF_SIG 0xb109b109
-/* xhyve: FIXME
- *
- * // #define BLOCKIF_NUMTHR 8
- *
- * OS X does not support preadv/pwritev, we need to serialize reads and writes
- * for the time being until we find a better solution.
- */
-#define BLOCKIF_NUMTHR 1
+#define BLOCKIF_SIG	0xb109b109
 
-#define BLOCKIF_MAXREQ (128 + BLOCKIF_NUMTHR)
+#define BLOCKIF_NUMTHR	8
+#define BLOCKIF_MAXREQ	(64 + BLOCKIF_NUMTHR)
 
 enum blockop {
 	BOP_READ,
@@ -78,39 +72,33 @@ enum blockstat {
 	BST_DONE
 };
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct blockif_elem {
 	TAILQ_ENTRY(blockif_elem) be_link;
-	struct blockif_req *be_req;
-	enum blockop be_op;
-	enum blockstat be_status;
-	pthread_t be_tid;
-	off_t be_block;
+	struct blockif_req  *be_req;
+	enum blockop	     be_op;
+	enum blockstat	     be_status;
+	pthread_t            be_tid;
+	off_t		     be_block;
 };
 
 struct blockif_ctxt {
-	int bc_magic;
-	char ident[16];
-	/* Only one of fd and bc_mbh may be >= 0 */
-	int bc_fd;
-#ifdef HAVE_OCAML_QCOW
-	mirage_block_handle bc_mbh;
-#endif
-	int bc_ischr;
-	int bc_isgeom;
-	int bc_candelete;
-	int bc_rdonly;
-	off_t bc_size;
-	int bc_sectsz;
-	int bc_psectsz;
-	int bc_psectoff;
-	int bc_closing;
-	pthread_t bc_btid[BLOCKIF_NUMTHR];
-	pthread_mutex_t bc_mtx;
-	pthread_cond_t bc_cond;
+	int			bc_magic;
+	int			bc_fd;
+	int			bc_ischr;
+	int			bc_isgeom;
+	int			bc_candelete;
+	int			bc_rdonly;
+	off_t			bc_size;
+	int			bc_sectsz;
+	int			bc_psectsz;
+	int			bc_psectoff;
+	int			bc_closing;
+	pthread_t		bc_btid[BLOCKIF_NUMTHR];
+        pthread_mutex_t		bc_mtx;
+        pthread_cond_t		bc_cond;
+
 	/* Request elements and free/pending/busy queues */
-	TAILQ_HEAD(, blockif_elem) bc_freeq;
+	TAILQ_HEAD(, blockif_elem) bc_freeq;       
 	TAILQ_HEAD(, blockif_elem) bc_pendq;
 	TAILQ_HEAD(, blockif_elem) bc_busyq;
 	struct blockif_elem	bc_reqs[BLOCKIF_MAXREQ];
@@ -119,116 +107,13 @@ struct blockif_ctxt {
 static pthread_once_t blockif_once = PTHREAD_ONCE_INIT;
 
 struct blockif_sig_elem {
-	pthread_mutex_t bse_mtx;
-	pthread_cond_t bse_cond;
-	int bse_pending;
-	struct blockif_sig_elem *bse_next;
+	pthread_mutex_t			bse_mtx;
+	pthread_cond_t			bse_cond;
+	int				bse_pending;
+	struct blockif_sig_elem		*bse_next;
 };
 
 static struct blockif_sig_elem *blockif_bse_head;
-
-#pragma clang diagnostic pop
-
-static ssize_t
-preadv(int fd, const struct iovec *iov, int iovcnt, off_t offset)
-{
-	off_t res;
-
-	res = lseek(fd, offset, SEEK_SET);
-	assert(res == offset);
-	return readv(fd, iov, iovcnt);
-}
-
-static ssize_t
-pwritev(int fd, const struct iovec *iov, int iovcnt, off_t offset)
-{
-	off_t res;
-
-	res = lseek(fd, offset, SEEK_SET);
-	assert(res == offset);
-	return writev(fd, iov, iovcnt);
-}
-
-static inline size_t iovec_len(const struct iovec *iov, int iovcnt)
-{
-	size_t len = 0;
-	int i;
-
-	for (i = 0; i < iovcnt; i++)
-		len += iov[i].iov_len;
-	return len;
-}
-
-static ssize_t
-block_preadv(struct blockif_ctxt *bc, const struct iovec *iov, int iovcnt, off_t offset)
-{
-	ssize_t ret;
-
-	if (HYPERKIT_BLOCK_PREADV_ENABLED())
-		HYPERKIT_BLOCK_PREADV(offset, iovec_len(iov, iovcnt));
-
-	if (bc->bc_fd >= 0)
-		ret = preadv(bc->bc_fd, iov, iovcnt, offset);
-#ifdef HAVE_OCAML_QCOW
-	else if (bc->bc_mbh >= 0)
-		ret = mirage_block_preadv(bc->bc_mbh, iov, iovcnt, offset);
-#endif
-	else
-		abort();
-
-	HYPERKIT_BLOCK_PREADV_DONE(offset, ret);
-	return ret;
-}
-
-static ssize_t
-block_pwritev(struct blockif_ctxt *bc, const struct iovec *iov, int iovcnt, off_t offset)
-{
-	ssize_t ret;
-
-	if (HYPERKIT_BLOCK_PWRITEV_ENABLED())
-		HYPERKIT_BLOCK_PWRITEV(offset, iovec_len(iov, iovcnt));
-
-	if (bc->bc_fd >= 0)
-		ret = pwritev(bc->bc_fd, iov, iovcnt, offset);
-#ifdef HAVE_OCAML_QCOW
-	else if (bc->bc_mbh >= 0)
-		ret = mirage_block_pwritev(bc->bc_mbh, iov, iovcnt, offset);
-#endif
-	else
-		abort();
-
-	HYPERKIT_BLOCK_PWRITEV_DONE(offset, ret);
-	return ret;
-}
-
-static int
-block_flush(struct blockif_ctxt *bc)
-{
-	if (bc->bc_fd >= 0) {
-		if (bc->bc_ischr) {
-                        if (ioctl(bc->bc_fd, DKIOCSYNCHRONIZECACHE))
-                                return errno;
-                } else if (fsync(bc->bc_fd))
-                        return errno;
-		return 0;
-#ifdef HAVE_OCAML_QCOW
-	} else if (bc->bc_mbh >= 0) {
-		if (mirage_block_flush(bc->bc_mbh))
-			 return errno;
-		return 0;
-#endif
-	} else
-		abort();
-}
-static int
-block_close(struct blockif_ctxt *bc)
-{
-	if (bc->bc_fd >= 0) return close(bc->bc_fd);
-#ifdef HAVE_OCAML_QCOW
-	if (bc->bc_mbh >= 0) return mirage_block_close(bc->bc_mbh);
-#endif
-	abort();
-}
 
 static int
 blockif_enqueue(struct blockif_ctxt *bc, struct blockif_req *breq,
@@ -252,7 +137,7 @@ blockif_enqueue(struct blockif_ctxt *bc, struct blockif_req *breq,
 		for (i = 0; i < breq->br_iovcnt; i++)
 			off += breq->br_iov[i].iov_len;
 		break;
-	case BOP_FLUSH:
+	default:
 		off = OFF_MAX;
 	}
 	be->be_block = off;
@@ -317,7 +202,7 @@ static void
 blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 {
 	struct blockif_req *br;
-	// off_t arg[2];
+	off_t arg[2];
 	ssize_t clen, len, off, boff, voff;
 	int i, err;
 
@@ -328,7 +213,7 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 	switch (be->be_op) {
 	case BOP_READ:
 		if (buf == NULL) {
-			if ((len = block_preadv(bc, br->br_iov, br->br_iovcnt,
+			if ((len = preadv(bc->bc_fd, br->br_iov, br->br_iovcnt,
 				   br->br_offset)) < 0)
 				err = errno;
 			else
@@ -339,21 +224,18 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 		off = voff = 0;
 		while (br->br_resid > 0) {
 			len = MIN(br->br_resid, MAXPHYS);
-			struct iovec iov;
-			iov.iov_base = buf;
-			iov.iov_len = (size_t) len;
-			if (block_preadv(bc, &iov, 1, br->br_offset + off) < 0)
-			{
+			if (pread(bc->bc_fd, buf, len, br->br_offset +
+			    off) < 0) {
 				err = errno;
 				break;
 			}
 			boff = 0;
 			do {
-				clen = MIN((len - boff),
-					(((ssize_t) br->br_iov[i].iov_len) - voff));
-				memcpy(((void *) (((uintptr_t) br->br_iov[i].iov_base) +
-					((size_t) voff))), buf + boff, clen);
-				if (clen < (((ssize_t) br->br_iov[i].iov_len) - voff))
+				clen = MIN(len - boff, br->br_iov[i].iov_len -
+				    voff);
+				memcpy(br->br_iov[i].iov_base + voff,
+				    buf + boff, clen);
+				if (clen < br->br_iov[i].iov_len - voff)
 					voff += clen;
 				else {
 					i++;
@@ -371,7 +253,7 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 			break;
 		}
 		if (buf == NULL) {
-			if ((len = block_pwritev(bc, br->br_iov, br->br_iovcnt,
+			if ((len = pwritev(bc->bc_fd, br->br_iov, br->br_iovcnt,
 				    br->br_offset)) < 0)
 				err = errno;
 			else
@@ -384,12 +266,11 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 			len = MIN(br->br_resid, MAXPHYS);
 			boff = 0;
 			do {
-				clen = MIN((len - boff),
-					(((ssize_t) br->br_iov[i].iov_len) - voff));
-				memcpy((buf + boff),
-					((void *) (((uintptr_t) br->br_iov[i].iov_base) +
-						((size_t) voff))), clen);
-				if (clen < (((ssize_t) br->br_iov[i].iov_len) - voff))
+				clen = MIN(len - boff, br->br_iov[i].iov_len -
+				    voff);
+				memcpy(buf + boff,
+				    br->br_iov[i].iov_base + voff, clen);
+				if (clen < br->br_iov[i].iov_len - voff)
 					voff += clen;
 				else {
 					i++;
@@ -397,10 +278,7 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 				}
 				boff += clen;
 			} while (boff < len);
-			struct iovec iov;
-			iov.iov_base = buf;
-			iov.iov_len = (size_t) len;
-			if (block_pwritev(bc, &iov, 1, br->br_offset +
+			if (pwrite(bc->bc_fd, buf, len, br->br_offset +
 			    off) < 0) {
 				err = errno;
 				break;
@@ -410,24 +288,29 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 		}
 		break;
 	case BOP_FLUSH:
-		err = block_flush(bc);
+		if (bc->bc_ischr) {
+			if (ioctl(bc->bc_fd, DIOCGFLUSH))
+				err = errno;
+		} else if (fsync(bc->bc_fd))
+			err = errno;
 		break;
 	case BOP_DELETE:
-		if (!bc->bc_candelete) {
+		if (!bc->bc_candelete)
 			err = EOPNOTSUPP;
-		// } else if (bc->bc_rdonly) {
-		// 	err = EROFS;
-		// } else if (bc->bc_ischr) {
-		// 	arg[0] = br->br_offset;
-		// 	arg[1] = br->br_resid;
-		// 	if (ioctl(bc->bc_fd, DIOCGDELETE, arg)) {
-		// 		err = errno;
-		// 	} else {
-		// 		br->br_resid = 0;
-		// 	}
-		} else {
+		else if (bc->bc_rdonly)
+			err = EROFS;
+		else if (bc->bc_ischr) {
+			arg[0] = br->br_offset;
+			arg[1] = br->br_resid;
+			if (ioctl(bc->bc_fd, DIOCGDELETE, arg))
+				err = errno;
+			else
+				br->br_resid = 0;
+		} else
 			err = EOPNOTSUPP;
-		}
+		break;
+	default:
+		err = EINVAL;
 		break;
 	}
 
@@ -444,18 +327,12 @@ blockif_thr(void *arg)
 	pthread_t t;
 	uint8_t *buf;
 
-#ifdef HAVE_OCAML_QCOW
-	mirage_block_register_thread();
-#endif
-
 	bc = arg;
 	if (bc->bc_isgeom)
 		buf = malloc(MAXPHYS);
 	else
 		buf = NULL;
 	t = pthread_self();
-
-	pthread_setname_np(bc->ident);
 
 	pthread_mutex_lock(&bc->bc_mtx);
 	for (;;) {
@@ -479,8 +356,7 @@ blockif_thr(void *arg)
 }
 
 static void
-blockif_sigcont_handler(UNUSED int signal, UNUSED enum ev_type type,
-	UNUSED void *arg)
+blockif_sigcont_handler(int signal, enum ev_type type, void *arg)
 {
 	struct blockif_sig_elem *bse;
 
@@ -514,27 +390,24 @@ blockif_init(void)
 struct blockif_ctxt *
 blockif_open(const char *optstr, const char *ident)
 {
-	// char name[MAXPATHLEN];
+	char tname[MAXCOMLEN + 1];
+	char name[MAXPATHLEN];
 	char *nopt, *xopts, *cp;
 	struct blockif_ctxt *bc;
 	struct stat sbuf;
-	// struct diocgattr_arg arg;
+	struct diocgattr_arg arg;
 	off_t size, psectsz, psectoff;
 	int extra, fd, i, sectsz;
 	int nocache, sync, ro, candelete, geom, ssopt, pssopt;
-	mirage_block_handle mbh;
-	int use_mirage = 0;
 
 	pthread_once(&blockif_once, blockif_init);
 
 	fd = -1;
-	mbh = -1;
 	ssopt = 0;
 	nocache = 0;
 	sync = 0;
 	ro = 0;
 
-	pssopt = 0;
 	/*
 	 * The first element in the optstring is always a pathname.
 	 * Optional elements follow
@@ -550,10 +423,6 @@ blockif_open(const char *optstr, const char *ident)
 			sync = 1;
 		else if (!strcmp(cp, "ro"))
 			ro = 1;
-#ifdef HAVE_OCAML_QCOW
-		else if (!strcmp(cp, "format=qcow"))
-			use_mirage = 1;
-#endif
 		else if (sscanf(cp, "sectorsize=%d/%d", &ssopt, &pssopt) == 2)
 			;
 		else if (sscanf(cp, "sectorsize=%d", &ssopt) == 1)
@@ -565,78 +434,51 @@ blockif_open(const char *optstr, const char *ident)
 	}
 
 	extra = 0;
-	if (nocache) {
-		perror("xhyve: nocache support unimplemented");
-		goto err;
-		// extra |= O_DIRECT;
-	}
+	if (nocache)
+		extra |= O_DIRECT;
 	if (sync)
 		extra |= O_SYNC;
 
-	if (use_mirage) {
-#ifdef HAVE_OCAML_QCOW
-		mirage_block_register_thread();
-		mbh = mirage_block_open(nopt);
-		if (mbh < 0) {
-			perror("Could not open mirage-block device");
-			goto err;
-		}
-
-		if (mirage_block_stat(mbh, &sbuf) < 0) {
-			perror("Could not stat backing file");
-			goto err;
-		}
-#else
-		abort();
-#endif
-	} else {
-		fd = open(nopt, (ro ? O_RDONLY : O_RDWR) | extra);
-		if (fd < 0 && !ro) {
-			/* Attempt a r/w fail with a r/o open */
-			fd = open(nopt, O_RDONLY | extra);
-			ro = 1;
-		}
-
-		if (fd < 0) {
-			perror("Could not open backing file");
-			goto err;
-		}
-
-		if (fstat(fd, &sbuf) < 0) {
-			perror("Could not stat backing file");
-			goto err;
-		}
+	fd = open(nopt, (ro ? O_RDONLY : O_RDWR) | extra);
+	if (fd < 0 && !ro) {
+		/* Attempt a r/w fail with a r/o open */
+		fd = open(nopt, O_RDONLY | extra);
+		ro = 1;
 	}
 
-	/* One and only one handle */
-	assert(mbh >= 0 || fd >= 0);
+	if (fd < 0) {
+		perror("Could not open backing file");
+		goto err;
+	}
 
-	/*
+        if (fstat(fd, &sbuf) < 0) {
+                perror("Could not stat backing file");
+		goto err;
+        }
+
+        /*
 	 * Deal with raw devices
 	 */
-	size = sbuf.st_size;
+        size = sbuf.st_size;
 	sectsz = DEV_BSIZE;
 	psectsz = psectoff = 0;
 	candelete = geom = 0;
 	if (S_ISCHR(sbuf.st_mode)) {
-		perror("xhyve: raw device support unimplemented");
-		goto err;
-		// if (ioctl(fd, DIOCGMEDIASIZE, &size) < 0 ||
-		// 	ioctl(fd, DIOCGSECTORSIZE, &sectsz))
-		// {
-		// 	perror("Could not fetch dev blk/sector size");
-		// 	goto err;
-		// }
-		// assert(size != 0);
-		// assert(sectsz != 0);
-		// if (ioctl(fd, DIOCGSTRIPESIZE, &psectsz) == 0 && psectsz > 0)
-		// 	ioctl(fd, DIOCGSTRIPEOFFSET, &psectoff);
-		// strlcpy(arg.name, "GEOM::candelete", sizeof(arg.name));
-		// arg.len = sizeof(arg.value.i);
-		// if (ioctl(fd, DIOCGATTR, &arg) == 0)
-		// 	candelete = arg.value.i;
-		// if (ioctl(fd, DIOCGPROVIDERNAME, name) == 0)
-		// 	geom = 1;
+		if (ioctl(fd, DIOCGMEDIASIZE, &size) < 0 ||
+		    ioctl(fd, DIOCGSECTORSIZE, &sectsz)) {
+			perror("Could not fetch dev blk/sector size");
+			goto err;
+		}
+		assert(size != 0);
+		assert(sectsz != 0);
+		if (ioctl(fd, DIOCGSTRIPESIZE, &psectsz) == 0 && psectsz > 0)
+			ioctl(fd, DIOCGSTRIPEOFFSET, &psectoff);
+		strlcpy(arg.name, "GEOM::candelete", sizeof(arg.name));
+		arg.len = sizeof(arg.value.i);
+		if (ioctl(fd, DIOCGATTR, &arg) == 0)
+			candelete = arg.value.i;
+		if (ioctl(fd, DIOCGPROVIDERNAME, name) == 0)
+			geom = 1;
 	} else
 		psectsz = sbuf.st_blksize;
 
@@ -648,21 +490,21 @@ blockif_open(const char *optstr, const char *ident)
 			goto err;
 		}
 
-		// /*
-		//  * Some backend drivers (e.g. cd0, ada0) require that the I/O
-		//  * size be a multiple of the device's sector size.
-		//  *
-		//  * Validate that the emulated sector size complies with this
-		//  * requirement.
-		//  */
-		// if (S_ISCHR(sbuf.st_mode)) {
-		// 	if (ssopt < sectsz || (ssopt % sectsz) != 0) {
-		// 		fprintf(stderr, "Sector size %d incompatible "
-		// 		    "with underlying device sector size %d\n",
-		// 		    ssopt, sectsz);
-		// 		goto err;
-		// 	}
-		// }
+		/*
+		 * Some backend drivers (e.g. cd0, ada0) require that the I/O
+		 * size be a multiple of the device's sector size.
+		 *
+		 * Validate that the emulated sector size complies with this
+		 * requirement.
+		 */
+		if (S_ISCHR(sbuf.st_mode)) {
+			if (ssopt < sectsz || (ssopt % sectsz) != 0) {
+				fprintf(stderr, "Sector size %d incompatible "
+				    "with underlying device sector size %d\n",
+				    ssopt, sectsz);
+				goto err;
+			}
+		}
 
 		sectsz = ssopt;
 		psectsz = pssopt;
@@ -675,20 +517,16 @@ blockif_open(const char *optstr, const char *ident)
 		goto err;
 	}
 
-	bc->bc_magic = (int) BLOCKIF_SIG;
-	snprintf(bc->ident, sizeof(bc->ident), "blk:%s", ident);
+	bc->bc_magic = BLOCKIF_SIG;
 	bc->bc_fd = fd;
-#ifdef HAVE_OCAML_QCOW
-	bc->bc_mbh = mbh;
-#endif
 	bc->bc_ischr = S_ISCHR(sbuf.st_mode);
 	bc->bc_isgeom = geom;
 	bc->bc_candelete = candelete;
 	bc->bc_rdonly = ro;
 	bc->bc_size = size;
 	bc->bc_sectsz = sectsz;
-	bc->bc_psectsz = (int) psectsz;
-	bc->bc_psectoff = (int) psectoff;
+	bc->bc_psectsz = psectsz;
+	bc->bc_psectoff = psectoff;
 	pthread_mutex_init(&bc->bc_mtx, NULL);
 	pthread_cond_init(&bc->bc_cond, NULL);
 	TAILQ_INIT(&bc->bc_freeq);
@@ -701,16 +539,14 @@ blockif_open(const char *optstr, const char *ident)
 
 	for (i = 0; i < BLOCKIF_NUMTHR; i++) {
 		pthread_create(&bc->bc_btid[i], NULL, blockif_thr, bc);
+		snprintf(tname, sizeof(tname), "blk-%s-%d", ident, i);
+		pthread_set_name_np(bc->bc_btid[i], tname);
 	}
 
 	return (bc);
 err:
 	if (fd >= 0)
 		close(fd);
-#ifdef HAVE_OCAML_QCOW
-	if (mbh >= 0)
-		mirage_block_close(mbh);
-#endif
 	return (NULL);
 }
 
@@ -747,28 +583,32 @@ blockif_request(struct blockif_ctxt *bc, struct blockif_req *breq,
 int
 blockif_read(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
 	return (blockif_request(bc, breq, BOP_READ));
 }
 
 int
 blockif_write(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
 	return (blockif_request(bc, breq, BOP_WRITE));
 }
 
 int
 blockif_flush(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
 	return (blockif_request(bc, breq, BOP_FLUSH));
 }
 
 int
 blockif_delete(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
 	return (blockif_request(bc, breq, BOP_DELETE));
 }
 
@@ -777,7 +617,7 @@ blockif_cancel(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
 	struct blockif_elem *be;
 
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+	assert(bc->bc_magic == BLOCKIF_SIG);
 
 	pthread_mutex_lock(&bc->bc_mtx);
 	/*
@@ -856,7 +696,7 @@ blockif_close(struct blockif_ctxt *bc)
 
 	err = 0;
 
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+	assert(bc->bc_magic == BLOCKIF_SIG);
 
 	/*
 	 * Stop the block i/o thread
@@ -874,7 +714,7 @@ blockif_close(struct blockif_ctxt *bc)
 	 * Release resources
 	 */
 	bc->bc_magic = 0;
-	block_close(bc);
+	close(bc->bc_fd);
 	free(bc);
 
 	return (0);
@@ -892,22 +732,22 @@ blockif_chs(struct blockif_ctxt *bc, uint16_t *c, uint8_t *h, uint8_t *s)
 	uint16_t secpt;		/* sectors per track */
 	uint8_t heads;
 
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+	assert(bc->bc_magic == BLOCKIF_SIG);
 
 	sectors = bc->bc_size / bc->bc_sectsz;
 
 	/* Clamp the size to the largest possible with CHS */
-	if (sectors > 65535LL*16*255)
-		sectors = 65535LL*16*255;
+	if (sectors > 65535UL*16*255)
+		sectors = 65535UL*16*255;
 
-	if (sectors >= 65536LL*16*63) {
+	if (sectors >= 65536UL*16*63) {
 		secpt = 255;
 		heads = 16;
 		hcyl = sectors / secpt;
 	} else {
 		secpt = 17;
 		hcyl = sectors / secpt;
-		heads = (uint8_t) ((hcyl + 1023) / 1024);
+		heads = (hcyl + 1023) / 1024;
 
 		if (heads < 4)
 			heads = 4;
@@ -924,9 +764,9 @@ blockif_chs(struct blockif_ctxt *bc, uint16_t *c, uint8_t *h, uint8_t *s)
 		}
 	}
 
-	*c = (uint16_t) (hcyl / heads);
+	*c = hcyl / heads;
 	*h = heads;
-	*s = (uint8_t) secpt;
+	*s = secpt;
 }
 
 /*
@@ -935,21 +775,24 @@ blockif_chs(struct blockif_ctxt *bc, uint16_t *c, uint8_t *h, uint8_t *s)
 off_t
 blockif_size(struct blockif_ctxt *bc)
 {
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
 	return (bc->bc_size);
 }
 
 int
 blockif_sectsz(struct blockif_ctxt *bc)
 {
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
 	return (bc->bc_sectsz);
 }
 
 void
 blockif_psectsz(struct blockif_ctxt *bc, int *size, int *off)
 {
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
 	*size = bc->bc_psectsz;
 	*off = bc->bc_psectoff;
 }
@@ -957,20 +800,23 @@ blockif_psectsz(struct blockif_ctxt *bc, int *size, int *off)
 int
 blockif_queuesz(struct blockif_ctxt *bc)
 {
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
 	return (BLOCKIF_MAXREQ - 1);
 }
 
 int
 blockif_is_ro(struct blockif_ctxt *bc)
 {
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
 	return (bc->bc_rdonly);
 }
 
 int
 blockif_candelete(struct blockif_ctxt *bc)
 {
-	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
 	return (bc->bc_candelete);
 }

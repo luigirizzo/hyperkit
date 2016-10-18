@@ -27,7 +27,8 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _AHCI_H_
+#define	_AHCI_H_
 
 /* ATA register defines */
 #define ATA_DATA                        0       /* (RW) data */
@@ -305,15 +306,17 @@
 /* Just to be sure, if building as module. */
 #if MAXPHYS < 512 * 1024
 #undef MAXPHYS
-#define MAXPHYS 512 * 1024
+#define MAXPHYS				512 * 1024
 #endif
 /* Pessimistic prognosis on number of required S/G entries */
-#define AHCI_SG_ENTRIES (roundup(btoc(MAXPHYS) + 1, 8))
+#define AHCI_SG_ENTRIES	(roundup(btoc(MAXPHYS) + 1, 8))
 /* Command list. 32 commands. First, 1Kbyte aligned. */
-#define AHCI_CL_OFFSET 0
-#define AHCI_CL_SIZE 32
+#define AHCI_CL_OFFSET              0
+#define AHCI_CL_SIZE                32
 /* Command tables. Up to 32 commands, Each, 128byte aligned. */
-#define AHCI_CT_OFFSET (AHCI_CL_OFFSET + AHCI_CL_SIZE * AHCI_MAX_SLOTS)
-#define AHCI_CT_SIZE (128 + AHCI_SG_ENTRIES * 16)
+#define AHCI_CT_OFFSET              (AHCI_CL_OFFSET + AHCI_CL_SIZE * AHCI_MAX_SLOTS)
+#define AHCI_CT_SIZE                (128 + AHCI_SG_ENTRIES * 16)
 /* Total main work area. */
-#define AHCI_WORK_SIZE (AHCI_CT_OFFSET + AHCI_CT_SIZE * ch->numslots)
+#define AHCI_WORK_SIZE              (AHCI_CT_OFFSET + AHCI_CT_SIZE * ch->numslots)
+
+#endif /* _AHCI_H_ */

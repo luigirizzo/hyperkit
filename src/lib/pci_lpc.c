@@ -1,7 +1,6 @@
 /*-
  * Copyright (c) 2013 Neel Natu <neel@freebsd.org>
  * Copyright (c) 2013 Tycho Nightingale <tycho.nightingale@pluribusnetworks.com>
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,17 +27,24 @@
  * $FreeBSD$
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+#include <machine/vmm.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/acpi.h>
-#include <xhyve/inout.h>
-#include <xhyve/dbgport.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/pci_irq.h>
-#include <xhyve/pci_lpc.h>
-#include <xhyve/uart_emul.h>
+
+#include <vmmapi.h>
+
+#include "acpi.h"
+#include "inout.h"
+#include "pci_emul.h"
+#include "pci_irq.h"
+#include "pci_lpc.h"
+#include "uart_emul.h"
 
 #define	IO_ICU1		0x20
 #define	IO_ICU2		0xA0
@@ -57,18 +63,13 @@ SYSRES_IO(NMISC_PORT, 1);
 static struct pci_devinst *lpc_bridge;
 
 #define	LPC_UART_NUM	2
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 static struct lpc_uart_softc {
 	struct uart_softc *uart_softc;
 	const char *opts;
-	const char *name;
 	int	iobase;
 	int	irq;
 	int	enabled;
 } lpc_uart_softc[LPC_UART_NUM];
-#pragma clang diagnostic pop
 
 static const char *lpc_uart_names[LPC_UART_NUM] = { "COM1", "COM2" };
 
@@ -90,7 +91,6 @@ lpc_device_parse(const char *opts)
 		for (unit = 0; unit < LPC_UART_NUM; unit++) {
 			if (strcasecmp(lpcdev, lpc_uart_names[unit]) == 0) {
 				lpc_uart_softc[unit].opts = str;
-				lpc_uart_softc[unit].name = lpc_uart_names[unit];
 				error = 0;
 				goto done;
 			}
@@ -111,21 +111,21 @@ lpc_uart_intr_assert(void *arg)
 
 	assert(sc->irq >= 0);
 
-	xh_vm_isa_pulse_irq(sc->irq, sc->irq);
+	vm_isa_pulse_irq(lpc_bridge->pi_vmctx, sc->irq, sc->irq);
 }
 
 static void
-lpc_uart_intr_deassert(UNUSED void *arg)
+lpc_uart_intr_deassert(void *arg)
 {
-	/*
+	/* 
 	 * The COM devices on the LPC bus generate edge triggered interrupts,
 	 * so nothing more to do here.
 	 */
 }
 
 static int
-lpc_uart_io_handler(UNUSED int vcpu, int in, int port, int bytes, uint32_t *eax,
-	void *arg)
+lpc_uart_io_handler(struct vmctx *ctx, int vcpu, int in, int port, int bytes,
+		    uint32_t *eax, void *arg)
 {
 	int offset;
 	struct lpc_uart_softc *sc = arg;
@@ -137,15 +137,15 @@ lpc_uart_io_handler(UNUSED int vcpu, int in, int port, int bytes, uint32_t *eax,
 		if (in)
 			*eax = uart_read(sc->uart_softc, offset);
 		else
-			uart_write(sc->uart_softc, offset, ((uint8_t) *eax));
+			uart_write(sc->uart_softc, offset, *eax);
 		break;
 	case 2:
 		if (in) {
-			*eax = (uint32_t) uart_read(sc->uart_softc, offset);
-			*eax |= (uint32_t) (uart_read(sc->uart_softc, offset + 1) << 8);
+			*eax = uart_read(sc->uart_softc, offset);
+			*eax |= uart_read(sc->uart_softc, offset + 1) << 8;
 		} else {
-			uart_write(sc->uart_softc, offset, ((uint8_t) *eax));
-			uart_write(sc->uart_softc, offset + 1, ((uint8_t) (*eax >> 8)));
+			uart_write(sc->uart_softc, offset, *eax);
+			uart_write(sc->uart_softc, offset + 1, *eax >> 8);
 		}
 		break;
 	default:
@@ -160,15 +160,17 @@ lpc_init(void)
 {
 	struct lpc_uart_softc *sc;
 	struct inout_port iop;
+	const char *name;
 	int unit, error;
 
 	/* COM1 and COM2 */
 	for (unit = 0; unit < LPC_UART_NUM; unit++) {
 		sc = &lpc_uart_softc[unit];
+		name = lpc_uart_names[unit];
 
 		if (uart_legacy_alloc(unit, &sc->iobase, &sc->irq) != 0) {
 			fprintf(stderr, "Unable to allocate resources for "
-			    "LPC device %s\n", sc->name);
+			    "LPC device %s\n", name);
 			return (-1);
 		}
 		pci_irq_reserve(sc->irq);
@@ -176,14 +178,14 @@ lpc_init(void)
 		sc->uart_softc = uart_init(lpc_uart_intr_assert,
 				    lpc_uart_intr_deassert, sc);
 
-		if (uart_set_backend(sc->uart_softc, sc->opts, sc->name) != 0) {
+		if (uart_set_backend(sc->uart_softc, sc->opts) != 0) {
 			fprintf(stderr, "Unable to initialize backend '%s' "
-			    "for LPC device %s\n", sc->opts, sc->name);
+			    "for LPC device %s\n", sc->opts, name);
 			return (-1);
 		}
 
 		bzero(&iop, sizeof(struct inout_port));
-		iop.name = sc->name;
+		iop.name = name;
 		iop.port = sc->iobase;
 		iop.size = UART_IO_BAR_SIZE;
 		iop.flags = IOPORT_F_INOUT;
@@ -277,7 +279,7 @@ pci_lpc_sysres_dsdt(void)
 		lsp = *lspp;
 		switch (lsp->type) {
 		case LPC_SYSRES_IO:
-			dsdt_fixed_ioport(((uint16_t) lsp->base), ((uint16_t) lsp->length));
+			dsdt_fixed_ioport(lsp->base, lsp->length);
 			break;
 		case LPC_SYSRES_MEM:
 			dsdt_fixed_mem32(lsp->base, lsp->length);
@@ -309,8 +311,8 @@ pci_lpc_uart_dsdt(void)
 		dsdt_line("  Name (_CRS, ResourceTemplate ()");
 		dsdt_line("  {");
 		dsdt_indent(2);
-		dsdt_fixed_ioport(((uint16_t) sc->iobase), UART_IO_BAR_SIZE);
-		dsdt_fixed_irq(((uint8_t) sc->irq));
+		dsdt_fixed_ioport(sc->iobase, UART_IO_BAR_SIZE);
+		dsdt_fixed_irq(sc->irq);
 		dsdt_unindent(2);
 		dsdt_line("  })");
 		dsdt_line("}");
@@ -319,8 +321,8 @@ pci_lpc_uart_dsdt(void)
 LPC_DSDT(pci_lpc_uart_dsdt);
 
 static int
-pci_lpc_cfgwrite(UNUSED int vcpu, struct pci_devinst *pi, int coff, int bytes,
-	uint32_t val)
+pci_lpc_cfgwrite(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
+		  int coff, int bytes, uint32_t val)
 {
 	int pirq_pin;
 
@@ -331,7 +333,7 @@ pci_lpc_cfgwrite(UNUSED int vcpu, struct pci_devinst *pi, int coff, int bytes,
 		if (coff >= 0x68 && coff <= 0x6b)
 			pirq_pin = coff - 0x68 + 5;
 		if (pirq_pin != 0) {
-			pirq_write(pirq_pin, ((uint8_t) val));
+			pirq_write(ctx, pirq_pin, val);
 			pci_set_cfgdata8(pi, coff, pirq_read(pirq_pin));
 			return (0);
 		}
@@ -340,14 +342,14 @@ pci_lpc_cfgwrite(UNUSED int vcpu, struct pci_devinst *pi, int coff, int bytes,
 }
 
 static void
-pci_lpc_write(UNUSED int vcpu, UNUSED struct pci_devinst *pi, UNUSED int baridx,
-	UNUSED uint64_t offset, UNUSED int size, UNUSED uint64_t value)
+pci_lpc_write(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
+	       int baridx, uint64_t offset, int size, uint64_t value)
 {
 }
 
 static uint64_t
-pci_lpc_read(UNUSED int vcpu, UNUSED struct pci_devinst *pi, UNUSED int baridx,
-	UNUSED uint64_t offset, UNUSED int size)
+pci_lpc_read(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
+	      int baridx, uint64_t offset, int size)
 {
 	return (0);
 }
@@ -356,7 +358,7 @@ pci_lpc_read(UNUSED int vcpu, UNUSED struct pci_devinst *pi, UNUSED int baridx,
 #define	LPC_VENDOR	0x8086
 
 static int
-pci_lpc_init(struct pci_devinst *pi, UNUSED char *opts)
+pci_lpc_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 {
 
 	/*
@@ -410,13 +412,13 @@ lpc_pirq_routed(void)
 	if (lpc_bridge == NULL)
 		return;
 
-	for (pin = 0; pin < 4; pin++)
+ 	for (pin = 0; pin < 4; pin++)
 		pci_set_cfgdata8(lpc_bridge, 0x60 + pin, pirq_read(pin + 1));
 	for (pin = 0; pin < 4; pin++)
 		pci_set_cfgdata8(lpc_bridge, 0x68 + pin, pirq_read(pin + 5));
 }
 
-static struct pci_devemu pci_de_lpc = {
+struct pci_devemu pci_de_lpc = {
 	.pe_emu =	"lpc",
 	.pe_init =	pci_lpc_init,
 	.pe_write_dsdt = pci_lpc_write_dsdt,

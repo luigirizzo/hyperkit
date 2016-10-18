@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2012 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,19 +26,20 @@
  * $FreeBSD$
  */
 
-// #include <x86/mptable.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
 #include <sys/types.h>
 #include <sys/errno.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/mptable.h>
-#include <xhyve/acpi.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/mptbl.h>
-#include <xhyve/pci_emul.h>
+#include <x86/mptable.h>
+
+#include <stdio.h>
+#include <string.h>
+
+#include "acpi.h"
+#include "bhyverun.h"
+#include "mptbl.h"
+#include "pci_emul.h"
 
 #define MPTABLE_BASE		0xF0000
 
@@ -95,15 +95,16 @@ mpt_compute_checksum(void *base, size_t len)
 		sum += *bytes++;
 	}
 
-	return ((uint8_t) (256 - sum));
+	return (256 - sum);
 }
 
 static void
-mpt_build_mpfp(mpfps_t mpfp, uint64_t gpa)
+mpt_build_mpfp(mpfps_t mpfp, vm_paddr_t gpa)
 {
+
 	memset(mpfp, 0, sizeof(*mpfp));
 	memcpy(mpfp->signature, MPFP_SIG, 4);
-	mpfp->pap = (uint32_t) (gpa + sizeof(*mpfp));
+	mpfp->pap = gpa + sizeof(*mpfp);
 	mpfp->length = 1;
 	mpfp->spec_rev = MP_SPECREV;
 	mpfp->checksum = mpt_compute_checksum(mpfp, sizeof(*mpfp));
@@ -129,7 +130,7 @@ mpt_build_proc_entries(proc_entry_ptr mpep, int ncpu)
 	for (i = 0; i < ncpu; i++) {
 		memset(mpep, 0, sizeof(*mpep));
 		mpep->type = MPCT_ENTRY_PROCESSOR;
-		mpep->apic_id = (uint8_t) i; // XXX
+		mpep->apic_id = i; // XXX
 		mpep->apic_version = LAPIC_VERSION;
 		mpep->cpu_flags = PROCENTRY_FLAG_EN;
 		if (i == 0)
@@ -176,7 +177,7 @@ mpt_build_bus_entries(bus_entry_ptr mpeb)
 
 	memset(mpeb, 0, sizeof(*mpeb));
 	mpeb->type = MPCT_ENTRY_BUS;
-	mpeb->bus_id = 1;
+	mpeb->bus_id = 1;	
 	memcpy(mpeb->bus_type, MPE_BUSNAME_ISA, MPE_BUSNAME_LEN);
 }
 
@@ -186,7 +187,7 @@ mpt_build_ioapic_entries(io_apic_entry_ptr mpei, int id)
 
 	memset(mpei, 0, sizeof(*mpei));
 	mpei->type = MPCT_ENTRY_IOAPIC;
-	mpei->apic_id = (uint8_t) id;
+	mpei->apic_id = id;
 	mpei->apic_version = IOAPIC_VERSION;
 	mpei->apic_flags = IOAPICENTRY_FLAG_EN;
 	mpei->apic_address = IOAPIC_PADDR;
@@ -209,8 +210,8 @@ mpt_count_ioint_entries(void)
 }
 
 static void
-mpt_generate_pci_int(int bus, int slot, int pin, UNUSED int pirq_pin,
-	int ioapic_irq, void *arg)
+mpt_generate_pci_int(int bus, int slot, int pin, int pirq_pin, int ioapic_irq,
+    void *arg)
 {
 	int_entry_ptr *mpiep, mpie;
 
@@ -224,10 +225,10 @@ mpt_generate_pci_int(int bus, int slot, int pin, UNUSED int pirq_pin,
 	 */
 	mpie->type = MPCT_ENTRY_INT;
 	mpie->int_type = INTENTRY_TYPE_INT;
-	mpie->src_bus_id = (uint8_t) bus;
-	mpie->src_bus_irq = (uint8_t) (slot << 2 | (pin - 1));
+	mpie->src_bus_id = bus;
+	mpie->src_bus_irq = slot << 2 | (pin - 1);
 	mpie->dst_apic_id = mpie[-1].dst_apic_id;
-	mpie->dst_apic_int = (uint8_t) ioapic_irq;
+	mpie->dst_apic_int = ioapic_irq;
 
 	*mpiep = mpie + 1;
 }
@@ -239,7 +240,7 @@ mpt_build_ioint_entries(int_entry_ptr mpie, int id)
 
 	/*
 	 * The following config is taken from kernel mptable.c
-	 * mptable_parse_default_config_ints(...), for now
+	 * mptable_parse_default_config_ints(...), for now 
 	 * just use the default config, tweek later if needed.
 	 */
 
@@ -248,13 +249,13 @@ mpt_build_ioint_entries(int_entry_ptr mpie, int id)
 		memset(mpie, 0, sizeof(*mpie));
 		mpie->type = MPCT_ENTRY_INT;
 		mpie->src_bus_id = 1;
-		mpie->dst_apic_id = (uint8_t) id;
+		mpie->dst_apic_id = id;
 
 		/*
 		 * All default configs route IRQs from bus 0 to the first 16
 		 * pins of the first I/O APIC with an APIC ID of 2.
 		 */
-		mpie->dst_apic_int = (uint8_t) pin;
+		mpie->dst_apic_int = pin;
 		switch (pin) {
 		case 0:
 			/* Pin 0 is an ExtINT pin. */
@@ -275,7 +276,7 @@ mpt_build_ioint_entries(int_entry_ptr mpie, int id)
 		default:
 			/* All other pins are identity mapped. */
 			mpie->int_type = INTENTRY_TYPE_INT;
-			mpie->src_bus_irq = (uint8_t) pin;
+			mpie->src_bus_irq = pin;
 			break;
 		}
 		mpie++;
@@ -283,7 +284,7 @@ mpt_build_ioint_entries(int_entry_ptr mpie, int id)
 
 	/* Next, generate entries for any PCI INTx interrupts. */
 	for (bus = 0; bus <= PCI_BUSMAX; bus++)
-		pci_walk_lintr(bus, mpt_generate_pci_int, &mpie);
+		pci_walk_lintr(bus, mpt_generate_pci_int, &mpie); 
 }
 
 void
@@ -295,7 +296,7 @@ mptable_add_oemtbl(void *tbl, int tblsz)
 }
 
 int
-mptable_build(int ncpu)
+mptable_build(struct vmctx *ctx, int ncpu)
 {
 	mpcth_t			mpch;
 	bus_entry_ptr		mpeb;
@@ -307,7 +308,7 @@ mptable_build(int ncpu)
 	char 			*curraddr;
 	char 			*startaddr;
 
-	startaddr = paddr_guest2host(MPTABLE_BASE, MPTABLE_MAX_LENGTH);
+	startaddr = paddr_guest2host(ctx, MPTABLE_BASE, MPTABLE_MAX_LENGTH);
 	if (startaddr == NULL) {
 		fprintf(stderr, "mptable requires mapped mem\n");
 		return (ENOMEM);
@@ -339,7 +340,7 @@ mptable_build(int ncpu)
 
 	mpep = (proc_entry_ptr)curraddr;
 	mpt_build_proc_entries(mpep, ncpu);
-	curraddr += sizeof(*mpep) * ((uint64_t) ncpu);
+	curraddr += sizeof(*mpep) * ncpu;
 	mpch->entry_count += ncpu;
 
 	mpeb = (bus_entry_ptr) curraddr;
@@ -355,7 +356,7 @@ mptable_build(int ncpu)
 	mpie = (int_entry_ptr) curraddr;
 	ioints = mpt_count_ioint_entries();
 	mpt_build_ioint_entries(mpie, 0);
-	curraddr += sizeof(*mpie) * ((uint64_t) ioints);
+	curraddr += sizeof(*mpie) * ioints;
 	mpch->entry_count += ioints;
 
 	mpie = (int_entry_ptr)curraddr;
@@ -364,13 +365,12 @@ mptable_build(int ncpu)
 	mpch->entry_count += MPEII_NUM_LOCAL_IRQ;
 
 	if (oem_tbl_start) {
-		mpch->oem_table_pointer =
-			(uint32_t) (curraddr - startaddr + MPTABLE_BASE);
-		mpch->oem_table_size = (uint16_t) oem_tbl_size;
+		mpch->oem_table_pointer = curraddr - startaddr + MPTABLE_BASE;
+		mpch->oem_table_size = oem_tbl_size;
 		memcpy(curraddr, oem_tbl_start, oem_tbl_size);
 	}
 
-	mpch->base_table_length = (uint16_t) (curraddr - (char *)mpch);
+	mpch->base_table_length = curraddr - (char *)mpch;
 	mpch->checksum = mpt_compute_checksum(mpch, mpch->base_table_length);
 
 	return (0);

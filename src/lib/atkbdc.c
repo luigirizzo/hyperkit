@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2014 Tycho Nightingale <tycho.nightingale@pluribusnetworks.com>
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,23 +24,32 @@
  * SUCH DAMAGE.
  */
 
-#include <stdint.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+
+#include <machine/vmm.h>
+
+#include <vmmapi.h>
+
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/inout.h>
-#include <xhyve/pci_lpc.h>
 
-#define KBD_DATA_PORT 0x60
-#define KBD_STS_CTL_PORT 0x64
-#define KBD_SYS_FLAG 0x4
-#define KBDC_RESET 0xfe
+#include "inout.h"
+#include "pci_lpc.h"
+
+#define	KBD_DATA_PORT		0x60
+
+#define	KBD_STS_CTL_PORT	0x64
+#define	 KBD_SYS_FLAG		0x4
+
+#define	KBDC_RESET		0xfe
 
 static int
-atkbdc_data_handler(UNUSED int vcpu, UNUSED int in, UNUSED int port, int bytes,
-	uint32_t *eax, UNUSED void *arg)
+atkbdc_data_handler(struct vmctx *ctx, int vcpu, int in, int port, int bytes,
+    uint32_t *eax, void *arg)
 {
 	if (bytes != 1)
 		return (-1);
@@ -52,8 +60,8 @@ atkbdc_data_handler(UNUSED int vcpu, UNUSED int in, UNUSED int port, int bytes,
 }
 
 static int
-atkbdc_sts_ctl_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes,
-	uint32_t *eax, UNUSED void *arg)
+atkbdc_sts_ctl_handler(struct vmctx *ctx, int vcpu, int in, int port,
+    int bytes, uint32_t *eax, void *arg)
 {
 	int error, retval;
 
@@ -66,7 +74,7 @@ atkbdc_sts_ctl_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes,
 	} else {
 		switch (*eax) {
 		case KBDC_RESET:	/* Pulse "reset" line. */
-			error = xh_vm_suspend(VM_SUSPEND_RESET);
+			error = vm_suspend(ctx, VM_SUSPEND_RESET);
 			assert(error == 0 || errno == EALREADY);
 			break;
 		}
@@ -77,5 +85,6 @@ atkbdc_sts_ctl_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes,
 
 INOUT_PORT(atkdbc, KBD_DATA_PORT, IOPORT_F_INOUT, atkbdc_data_handler);
 SYSRES_IO(KBD_DATA_PORT, 1);
-INOUT_PORT(atkbdc, KBD_STS_CTL_PORT,  IOPORT_F_INOUT, atkbdc_sts_ctl_handler);
+INOUT_PORT(atkbdc, KBD_STS_CTL_PORT,  IOPORT_F_INOUT,
+    atkbdc_sts_ctl_handler);
 SYSRES_IO(KBD_STS_CTL_PORT, 1);

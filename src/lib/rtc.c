@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,29 +26,38 @@
  * $FreeBSD$
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+
 #include <time.h>
 #include <assert.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/acpi.h>
-#include <xhyve/pci_lpc.h>
-#include <xhyve/rtc.h>
 
-#define	IO_RTC 0x70
+#include <machine/vmm.h>
+#include <vmmapi.h>
 
-#define	RTC_LMEM_LSB 0x34
-#define	RTC_LMEM_MSB 0x35
-#define	RTC_HMEM_LSB 0x5b
-#define	RTC_HMEM_SB 0x5c
-#define	RTC_HMEM_MSB 0x5d
+#include "acpi.h"
+#include "pci_lpc.h"
+#include "rtc.h"
 
-#define m_64KB (64*1024)
-#define	m_16MB (16*1024*1024)
+#define	IO_RTC		0x70
+
+#define	RTC_LMEM_LSB	0x34
+#define	RTC_LMEM_MSB	0x35
+#define	RTC_HMEM_LSB	0x5b
+#define	RTC_HMEM_SB	0x5c
+#define	RTC_HMEM_MSB	0x5d
+
+#define m_64KB		(64*1024)
+#define	m_16MB		(16*1024*1024)
+#define	m_4GB		(4ULL*1024*1024*1024)
 
 /*
  * Returns the current RTC time as number of seconds since 00:00:00 Jan 1, 1970
  */
 static time_t
-rtc_time(int use_localtime)
+rtc_time(struct vmctx *ctx, int use_localtime)
 {
 	struct tm tm;
 	time_t t;
@@ -63,8 +71,8 @@ rtc_time(int use_localtime)
 }
 
 void
-rtc_init(int use_localtime)
-{
+rtc_init(struct vmctx *ctx, int use_localtime)
+{	
 	size_t himem;
 	size_t lomem;
 	int err;
@@ -77,27 +85,28 @@ rtc_init(int use_localtime)
 	 * 0x34/0x35 - 64KB chunks above 16MB, below 4GB
 	 * 0x5b/0x5c/0x5d - 64KB chunks above 4GB
 	 */
-	lomem = (xh_vm_get_lowmem_size() - m_16MB) / m_64KB;
-	err = xh_vm_rtc_write(RTC_LMEM_LSB, ((uint8_t) lomem));
+	lomem = (vm_get_lowmem_size(ctx) - m_16MB) / m_64KB;
+	err = vm_rtc_write(ctx, RTC_LMEM_LSB, lomem);
 	assert(err == 0);
-	err = xh_vm_rtc_write(RTC_LMEM_MSB, ((uint8_t) (lomem >> 8)));
-	assert(err == 0);
-
-	himem = xh_vm_get_highmem_size() / m_64KB;
-	err = xh_vm_rtc_write(RTC_HMEM_LSB, ((uint8_t) himem));
-	assert(err == 0);
-	err = xh_vm_rtc_write(RTC_HMEM_SB, ((uint8_t) (himem >> 8)));
-	assert(err == 0);
-	err = xh_vm_rtc_write(RTC_HMEM_MSB, ((uint8_t) (himem >> 16)));
+	err = vm_rtc_write(ctx, RTC_LMEM_MSB, lomem >> 8);
 	assert(err == 0);
 
-	err = xh_vm_rtc_settime(rtc_time(use_localtime));
+	himem = vm_get_highmem_size(ctx) / m_64KB;
+	err = vm_rtc_write(ctx, RTC_HMEM_LSB, himem);
+	assert(err == 0);
+	err = vm_rtc_write(ctx, RTC_HMEM_SB, himem >> 8);
+	assert(err == 0);
+	err = vm_rtc_write(ctx, RTC_HMEM_MSB, himem >> 16);
+	assert(err == 0);
+
+	err = vm_rtc_settime(ctx, rtc_time(ctx, use_localtime));
 	assert(err == 0);
 }
 
 static void
 rtc_dsdt(void)
 {
+
 	dsdt_line("");
 	dsdt_line("Device (RTC)");
 	dsdt_line("{");

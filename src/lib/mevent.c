@@ -27,9 +27,12 @@
  */
 
 /*
- * Micro event library for FreeBSD, designed for a single i/o thread
+ * Micro event library for FreeBSD, designed for a single i/o thread 
  * using kqueue, and having events be persistent by default.
  */
+
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
 #include <assert.h>
 #include <errno.h>
@@ -37,12 +40,15 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <pthread.h>
+
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/time.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/mevent.h>
+
+#include <pthread.h>
+#include <pthread_np.h>
+
+#include "mevent.h"
 
 #define	MEVENT_MAX	64
 
@@ -58,21 +64,18 @@ static int mevent_timid = 43;
 static int mevent_pipefd[2];
 static pthread_mutex_t mevent_lmutex = PTHREAD_MUTEX_INITIALIZER;
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
-struct mevent {
-	void (*me_func)(int, enum ev_type, void *);
+struct mevent {	
+	void	(*me_func)(int, enum ev_type, void *);
 #define me_msecs me_fd
-	int me_fd;
-	int me_timid;
+	int	me_fd;
+	int	me_timid;
 	enum ev_type me_type;
-	void *me_param;
-	int me_cq;
-	int me_state;
-	int me_closefd;
-	LIST_ENTRY(mevent) me_list;
+	void    *me_param;
+	int	me_cq;
+	int	me_state;
+	int	me_closefd;
+	LIST_ENTRY(mevent) me_list;			   
 };
-#pragma clang diagnostic pop
 
 static LIST_HEAD(listhead, mevent) global_head, change_head;
 
@@ -89,10 +92,10 @@ mevent_qunlock(void)
 }
 
 static void
-mevent_pipe_read(int fd, UNUSED enum ev_type type, UNUSED void *param)
+mevent_pipe_read(int fd, enum ev_type type, void *param)
 {
 	char buf[MEVENT_MAX];
-	ssize_t status;
+	int status;
 
 	/*
 	 * Drain the pipe read side. The fd is non-blocking so this is
@@ -107,7 +110,7 @@ static void
 mevent_notify(void)
 {
 	char c;
-
+	
 	/*
 	 * If calling from outside the i/o thread, write a byte on the
 	 * pipe to force the i/o thread to exit the blocking kevent call.
@@ -166,14 +169,14 @@ mevent_kq_flags(struct mevent *mevp)
 }
 
 static int
-mevent_kq_fflags(UNUSED struct mevent *mevp)
+mevent_kq_fflags(struct mevent *mevp)
 {
 	/* XXX nothing yet, perhaps EV_EOF for reads ? */
 	return (0);
 }
 
 static int
-mevent_build(UNUSED int mfd, struct kevent *kev)
+mevent_build(int mfd, struct kevent *kev)
 {
 	struct mevent *mevp, *tmpp;
 	int i;
@@ -191,15 +194,15 @@ mevent_build(UNUSED int mfd, struct kevent *kev)
 			close(mevp->me_fd);
 		} else {
 			if (mevp->me_type == EVF_TIMER) {
-				kev[i].ident = (uintptr_t) mevp->me_timid;
+				kev[i].ident = mevp->me_timid;
 				kev[i].data = mevp->me_msecs;
 			} else {
-				kev[i].ident = (uintptr_t) mevp->me_fd;
+				kev[i].ident = mevp->me_fd;
 				kev[i].data = 0;
 			}
-			kev[i].filter = (int16_t) mevent_kq_filter(mevp);
-			kev[i].flags = (uint16_t) mevent_kq_flags(mevp);
-			kev[i].fflags = (uint32_t) mevent_kq_fflags(mevp);
+			kev[i].filter = mevent_kq_filter(mevp);
+			kev[i].flags = mevent_kq_flags(mevp);
+			kev[i].fflags = mevent_kq_fflags(mevp);
 			kev[i].udata = mevp;
 			i++;
 		}
@@ -309,7 +312,7 @@ mevent_update(struct mevent *evp, int newstate)
 	 */
 	if (evp->me_state == newstate)
 		return (0);
-
+	
 	mevent_qlock();
 
 	evp->me_state = newstate;
@@ -385,9 +388,11 @@ mevent_delete_close(struct mevent *evp)
 static void
 mevent_set_name(void)
 {
+
+	pthread_set_name_np(mevent_tid, "mevent");
 }
 
-__attribute__ ((noreturn)) void
+void
 mevent_dispatch(void)
 {
 	struct kevent changelist[MEVENT_MAX];
@@ -442,10 +447,10 @@ mevent_dispatch(void)
 		if (ret == -1 && errno != EINTR) {
 			perror("Error return from kevent monitor");
 		}
-
+		
 		/*
 		 * Handle reported events
 		 */
 		mevent_handle(eventlist, ret);
-	}
+	}			
 }

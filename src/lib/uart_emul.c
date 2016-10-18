@@ -1,7 +1,6 @@
 /*-
  * Copyright (c) 2012 NetApp, Inc.
  * Copyright (c) 2013 Neel Natu <neel@freebsd.org>
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,22 +27,24 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
-#include <stdbool.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+#include <dev/ic/ns16550.h>
+
 #include <stdio.h>
 #include <stdlib.h>
-#include <stddef.h>
-#include <strings.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <pthread.h>
-#include <termios.h>
 #include <assert.h>
-#include <errno.h>
-#include <sys/mman.h>
-#include <xhyve/support/ns16550.h>
-#include <xhyve/mevent.h>
-#include <xhyve/uart_emul.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
+#include <stdbool.h>
+#include <string.h>
+#include <pthread.h>
+
+#include "mevent.h"
+#include "uart_emul.h"
 
 #define	COM1_BASE      	0x3F8
 #define COM1_IRQ	4
@@ -69,8 +70,6 @@
 static bool uart_stdio;		/* stdio in use for i/o */
 static struct termios tio_stdio_orig;
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 static struct {
 	int	baseaddr;
 	int	irq;
@@ -93,15 +92,7 @@ struct fifo {
 struct ttyfd {
 	bool	opened;
 	int	fd;		/* tty device file descriptor */
-	int 	sfd;
-	char *name; /* slave pty name when using autopty*/
 	struct termios tio_orig, tio_new;    /* I/O Terminals */
-};
-
-struct log {
-	unsigned char *ring; /* array used as a ring */
-	size_t next;   /* offset of the next free byte */
-	size_t length; /* total length of the ring */
 };
 
 struct uart_softc {
@@ -122,14 +113,12 @@ struct uart_softc {
 	struct mevent *mev;
 
 	struct ttyfd tty;
-	struct log log;
 	bool	thre_int_pending;	/* THRE interrupt pending */
 
 	void	*arg;
 	uart_intr_func_t intr_assert;
 	uart_intr_func_t intr_deassert;
 };
-#pragma clang diagnostic pop
 
 static void uart_drain(int fd, enum ev_type ev, void *arg);
 
@@ -162,18 +151,10 @@ ttyread(struct ttyfd *tf)
 {
 	unsigned char rb;
 
-	ssize_t n = read(tf->fd, &rb, 1);
-
-	if (n == 1)
+	if (read(tf->fd, &rb, 1) == 1)
 		return (rb);
-	if (n == 0 && tf->name) {
-		/* We will get end of file in a loop until a slave is opened,
-		   so open a slave ourselves here. */
-		if (tf->sfd != -1) close(tf->sfd);
-		fprintf(stdout, "Reopening slave pty\n");
-		tf->sfd = open(tf->name, O_RDONLY | O_NONBLOCK);
-	}
-	return (-1);
+	else
+		return (-1);
 }
 
 static void
@@ -181,13 +162,6 @@ ttywrite(struct ttyfd *tf, unsigned char wb)
 {
 
 	(void)write(tf->fd, &wb, 1);
-}
-
-static void
-ringwrite(struct log *log, unsigned char wb)
-{
-  *(log->ring + log->next) = wb;
-	log->next = (log->next + 1) % log->length;
 }
 
 static void
@@ -298,31 +272,6 @@ uart_opentty(struct uart_softc *sc)
 	assert(sc->mev != NULL);
 }
 
-static int
-uart_mapring(struct uart_softc *sc, const char *path)
-{
-	int retval = -1, fd = -1;
-	sc->log.length = 65536;
-	if ((fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644)) == -1) {
-		perror("open console-ring");
-		goto out;
-	}
-	if (ftruncate(fd, (off_t)sc->log.length) == -1){
-		perror("ftruncate console-ring");
-		goto out;
-	}
-	if ((sc->log.ring = (unsigned char*)mmap(NULL, sc->log.length, PROT_WRITE, MAP_SHARED, fd, 0)) == MAP_FAILED) {
-		perror("mmap console-ring");
-		goto out;
-	}
-	sc->log.next = 0;
-	retval = 0;
-
-out:
-	if (fd != -1) close(fd);
-	return retval;
-}
-
 /*
  * The IIR returns a prioritized interrupt reason:
  * - receive data available
@@ -353,8 +302,8 @@ uart_reset(struct uart_softc *sc)
 	uint16_t divisor;
 
 	divisor = DEFAULT_RCLK / DEFAULT_BAUD / 16;
-	sc->dll = (uint8_t) divisor;
-	sc->dlh = (uint8_t) (divisor >> 16);
+	sc->dll = divisor;
+	sc->dlh = divisor >> 16;
 
 	rxfifo_reset(sc, 1);	/* no fifo until enabled by software */
 }
@@ -368,7 +317,7 @@ uart_toggle_intr(struct uart_softc *sc)
 {
 	uint8_t intr_reason;
 
-	intr_reason = (uint8_t) uart_intr_reason(sc);
+	intr_reason = uart_intr_reason(sc);
 
 	if (intr_reason == IIR_NOPEND)
 		(*sc->intr_deassert)(sc->arg);
@@ -382,11 +331,11 @@ uart_drain(int fd, enum ev_type ev, void *arg)
 	struct uart_softc *sc;
 	int ch;
 
-	sc = arg;
+	sc = arg;	
 
 	assert(fd == sc->tty.fd);
 	assert(ev == EVF_READ);
-
+	
 	/*
 	 * This routine is called in the context of the mevent thread
 	 * to take out the softc lock to protect against concurrent
@@ -399,7 +348,7 @@ uart_drain(int fd, enum ev_type ev, void *arg)
 	} else {
 		while (rxfifo_available(sc) &&
 		       ((ch = ttyread(&sc->tty)) != -1)) {
-			rxfifo_putchar(sc, ((uint8_t) ch));
+			rxfifo_putchar(sc, ch);
 		}
 		uart_toggle_intr(sc);
 	}
@@ -414,7 +363,7 @@ uart_write(struct uart_softc *sc, int offset, uint8_t value)
 	uint8_t msr;
 
 	pthread_mutex_lock(&sc->mtx);
-
+	
 	/*
 	 * Take care of the special case DLAB accesses first
 	 */
@@ -423,7 +372,7 @@ uart_write(struct uart_softc *sc, int offset, uint8_t value)
 			sc->dll = value;
 			goto done;
 		}
-
+		
 		if (offset == REG_DLH) {
 			sc->dlh = value;
 			goto done;
@@ -437,8 +386,6 @@ uart_write(struct uart_softc *sc, int offset, uint8_t value)
 				sc->lsr |= LSR_OE;
 		} else if (sc->tty.opened) {
 			ttywrite(&sc->tty, value);
-			if (sc->log.ring)
-				ringwrite(&sc->log, value);
 		} /* else drop on floor */
 		sc->thre_int_pending = true;
 		break;
@@ -555,7 +502,7 @@ uart_read(struct uart_softc *sc, int offset)
 			reg = sc->dll;
 			goto done;
 		}
-
+		
 		if (offset == REG_DLH) {
 			reg = sc->dlh;
 			goto done;
@@ -564,7 +511,7 @@ uart_read(struct uart_softc *sc, int offset)
 
 	switch (offset) {
 	case REG_DATA:
-		reg = (uint8_t) rxfifo_getchar(sc);
+		reg = rxfifo_getchar(sc);
 		break;
 	case REG_IER:
 		reg = sc->ier;
@@ -572,8 +519,8 @@ uart_read(struct uart_softc *sc, int offset)
 	case REG_IIR:
 		iir = (sc->fcr & FCR_ENABLE) ? IIR_FIFO_MASK : 0;
 
-		intr_reason = (uint8_t) uart_intr_reason(sc);
-
+		intr_reason = uart_intr_reason(sc);
+			
 		/*
 		 * Deal with side effects of reading the IIR register
 		 */
@@ -631,11 +578,8 @@ int
 uart_legacy_alloc(int which, int *baseaddr, int *irq)
 {
 
-	if ((which < 0) || (((unsigned) which) >= UART_NLDEVS) ||
-		uart_lres[which].inuse)
-	{
+	if (which < 0 || which >= UART_NLDEVS || uart_lres[which].inuse)
 		return (-1);
-	}
 
 	uart_lres[which].inuse = true;
 	*baseaddr = uart_lres[which].baseaddr;
@@ -664,137 +608,50 @@ uart_init(uart_intr_func_t intr_assert, uart_intr_func_t intr_deassert,
 }
 
 static int
-uart_tty_backend(struct uart_softc *sc, const char *backend)
+uart_tty_backend(struct uart_softc *sc, const char *opts)
 {
 	int fd;
 	int retval;
 
 	retval = -1;
 
-	fd = open(backend, O_RDWR | O_NONBLOCK);
+	fd = open(opts, O_RDWR | O_NONBLOCK);
 	if (fd > 0 && isatty(fd)) {
 		sc->tty.fd = fd;
 		sc->tty.opened = true;
 		retval = 0;
 	}
-
+	    
 	return (retval);
 }
 
-static char *
-copy_up_to_comma(const char *from)
-{
-        char *comma = strchr(from, ',');
-        char *tmp = NULL;
-        if (comma == NULL) {
-                tmp = strdup(from); /* rest of string */
-        } else {
-                ptrdiff_t length = comma - from;
-                tmp = strndup(from, (size_t)length);
-        }
-        return tmp;
-}
-
 int
-uart_set_backend(struct uart_softc *sc, const char *backend, const char *devname)
+uart_set_backend(struct uart_softc *sc, const char *opts)
 {
 	int retval;
-	char *linkname = NULL;
-	char *logname = NULL;
-	int ptyfd;
-	char *ptyname;
 
 	retval = -1;
 
-	if (backend == NULL)
+	if (opts == NULL)
 		return (0);
 
-	sc->tty.fd = -1;
-	sc->tty.sfd = -1;
-	sc->tty.name = NULL;
-
-	while (1) {
-		char *next;
-		if (!backend)
-			break;
-		next = strchr(backend, ',');
-		if (next)
-			next[0] = '\0';
-
-		if (strcmp("stdio", backend) == 0 && !uart_stdio) {
+	if (strcmp("stdio", opts) == 0) {
+		if (!uart_stdio) {
 			sc->tty.fd = STDIN_FILENO;
 			sc->tty.opened = true;
 			uart_stdio = true;
-			retval = fcntl(sc->tty.fd, F_SETFL, O_NONBLOCK);
-		} else if (strcmp("autopty", backend) == 0 ||
-			   strncmp("autopty=", backend, 8) == 0) {
-			linkname = NULL;
-			if (strncmp("autopty=", backend, 8) == 0)
-				linkname = copy_up_to_comma(backend + 8);
-			fprintf(stdout, "linkname %s\n", linkname);
-
-			if ((ptyfd = open("/dev/ptmx", O_RDWR | O_NONBLOCK)) == -1) {
-				fprintf(stderr, "error opening /dev/ptmx char device");
-				goto err;
-			}
-
-			if ((ptyname = ptsname(ptyfd)) == NULL) {
-				perror("ptsname: error getting name for slave pseudo terminal");
-				goto err;
-			}
-
-			if ((retval = grantpt(ptyfd)) == -1) {
-				perror("error setting up ownership and permissions on slave pseudo terminal");
-				goto err;
-			}
-
-			if ((retval = unlockpt(ptyfd)) == -1) {
-				perror("error unlocking slave pseudo terminal, to allow its usage");
-				goto err;
-			}
-
-			fprintf(stdout, "%s connected to %s\n", devname, ptyname);
-
-			if (linkname) {
-				if ((unlink(linkname) == -1) && (errno != ENOENT)) {
-					perror("unlinking autopty symlink");
-					goto err;
-				}
-				if (symlink(ptyname, linkname) == -1){
-					perror("creating autopty symlink");
-					goto err;
-				}
-				fprintf(stdout, "%s linked to %s\n", devname, linkname);
-			}
-
-			sc->tty.fd = ptyfd;
-			sc->tty.name = ptyname;
-			sc->tty.opened = true;
 			retval = 0;
-		} else if (strncmp("log=", backend, 4) == 0) {
-			logname = copy_up_to_comma(backend + 4);
-			if (uart_mapring(sc, logname) == -1) {
-				goto err;
-			}
-		} else if (uart_tty_backend(sc, backend) == 0) {
-			retval = 0;
-		} else {
-			goto err;
 		}
-
-		if (!next)
-			break;
-		backend = &next[1];
+	} else if (uart_tty_backend(sc, opts) == 0) {
+		retval = 0;
 	}
+
+	/* Make the backend file descriptor non-blocking */
+	if (retval == 0)
+		retval = fcntl(sc->tty.fd, F_SETFL, O_NONBLOCK);
 
 	if (retval == 0)
 		uart_opentty(sc);
-	goto out;
 
-err:
-	if (sc->tty.fd != -1) close(sc->tty.fd);
-out:
-	if (linkname) free(linkname);
-	if (logname) free(logname);
 	return (retval);
 }

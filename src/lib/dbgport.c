@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,32 +26,34 @@
  * $FreeBSD$
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/uio.h>
 
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/inout.h>
-#include <xhyve/dbgport.h>
-#include <xhyve/pci_lpc.h>
 
-#define	BVM_DBG_PORT 0x224
-#define	BVM_DBG_SIG ('B' << 8 | 'V')
+#include "inout.h"
+#include "dbgport.h"
+#include "pci_lpc.h"
+
+#define	BVM_DBG_PORT	0x224
+#define	BVM_DBG_SIG	('B' << 8 | 'V')
 
 static int listen_fd, conn_fd;
 
-static struct sockaddr_in saddrin;
+static struct sockaddr_in sin;
 
 static int
-dbg_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes, uint32_t *eax,
-	UNUSED void *arg)
+dbg_handler(struct vmctx *ctx, int vcpu, int in, int port, int bytes,
+	    uint32_t *eax, void *arg)
 {
 	char ch;
 	int nwritten, nread, printonce;
@@ -80,19 +81,19 @@ again:
 	}
 
 	if (in) {
-		nread = (int) read(conn_fd, &ch, 1);
+		nread = read(conn_fd, &ch, 1);
 		if (nread == -1 && errno == EAGAIN)
-			*eax = (uint32_t) (-1);
+			*eax = -1;
 		else if (nread == 1)
-			*eax = (uint32_t) ch;
+			*eax = ch;
 		else {
 			close(conn_fd);
 			conn_fd = -1;
 			goto again;
 		}
 	} else {
-		ch = (char) *eax;
-		nwritten = (int) write(conn_fd, &ch, 1);
+		ch = *eax;
+		nwritten = write(conn_fd, &ch, 1);
 		if (nwritten != 1) {
 			close(conn_fd);
 			conn_fd = -1;
@@ -107,8 +108,7 @@ static struct inout_port dbgport = {
 	BVM_DBG_PORT,
 	1,
 	IOPORT_F_INOUT,
-	dbg_handler,
-	NULL
+	dbg_handler
 };
 
 SYSRES_IO(BVM_DBG_PORT, 4);
@@ -123,12 +123,12 @@ init_dbgport(int sport)
 		exit(1);
 	}
 
-	saddrin.sin_len = sizeof(saddrin);
-	saddrin.sin_family = AF_INET;
-	saddrin.sin_addr.s_addr = htonl(INADDR_ANY);
-	saddrin.sin_port = htons(sport);
+	sin.sin_len = sizeof(sin);
+	sin.sin_family = AF_INET;
+	sin.sin_addr.s_addr = htonl(INADDR_ANY);
+	sin.sin_port = htons(sport);
 
-	if (bind(listen_fd, (struct sockaddr *)&saddrin, sizeof(saddrin)) < 0) {
+	if (bind(listen_fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
 		perror("bind");
 		exit(1);
 	}

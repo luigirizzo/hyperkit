@@ -26,6 +26,11 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _SMBIOSTBL_H_
+#define _SMBIOSTBL_H_
 
-int smbios_build(void);
+struct vmctx;
+
+int	smbios_build(struct vmctx *ctx);
+
+#endif /* _SMBIOSTBL_H_ */

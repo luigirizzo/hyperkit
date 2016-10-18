@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2012 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,12 +26,16 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+
 #include <stdio.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/uart_emul.h>
+
+#include "bhyverun.h"
+#include "pci_emul.h"
+#include "uart_emul.h"
 
 /*
  * Pick a PCI vid/did of a chip with a single uart at
@@ -59,34 +62,33 @@ pci_uart_intr_deassert(void *arg)
 }
 
 static void
-pci_uart_write(UNUSED int vcpu, struct pci_devinst *pi, int baridx, uint64_t offset,
-	int size, uint64_t value)
+pci_uart_write(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
+	       int baridx, uint64_t offset, int size, uint64_t value)
 {
 
 	assert(baridx == 0);
 	assert(size == 1);
 
-	uart_write(pi->pi_arg, ((int) offset), ((uint8_t) value));
+	uart_write(pi->pi_arg, offset, value);
 }
 
-static uint64_t
-pci_uart_read(UNUSED int vcpu, struct pci_devinst *pi, int baridx,
-	uint64_t offset, int size)
+uint64_t
+pci_uart_read(struct vmctx *ctx, int vcpu, struct pci_devinst *pi,
+	      int baridx, uint64_t offset, int size)
 {
 	uint8_t val;
 
 	assert(baridx == 0);
 	assert(size == 1);
 
-	val = uart_read(pi->pi_arg, ((int) offset));
+	val = uart_read(pi->pi_arg, offset);
 	return (val);
 }
 
 static int
-pci_uart_init(struct pci_devinst *pi, char *opts)
+pci_uart_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 {
 	struct uart_softc *sc;
-	char *name;
 
 	pci_emul_alloc_bar(pi, 0, PCIBAR_IO, UART_IO_BAR_SIZE);
 	pci_lintr_request(pi);
@@ -99,18 +101,16 @@ pci_uart_init(struct pci_devinst *pi, char *opts)
 	sc = uart_init(pci_uart_intr_assert, pci_uart_intr_deassert, pi);
 	pi->pi_arg = sc;
 
-	asprintf(&name, "pci uart at %d:%d", pi->pi_slot, pi->pi_func);
-	if (uart_set_backend(sc, opts, name) != 0) {
-		fprintf(stderr, "Unable to initialize backend '%s' for %s\n", opts, name);
-		free(name);
+	if (uart_set_backend(sc, opts) != 0) {
+		fprintf(stderr, "Unable to initialize backend '%s' for "
+		    "pci uart at %d:%d\n", opts, pi->pi_slot, pi->pi_func);
 		return (-1);
 	}
 
-	free(name);
 	return (0);
 }
 
-static struct pci_devemu pci_de_com = {
+struct pci_devemu pci_de_com = {
 	.pe_emu =	"uart",
 	.pe_init =	pci_uart_init,
 	.pe_barwrite =	pci_uart_write,

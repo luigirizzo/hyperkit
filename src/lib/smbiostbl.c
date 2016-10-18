@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2014 Tycho Nightingale <tycho.nightingale@pluribusnetworks.com>
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,39 +24,42 @@
  * SUCH DAMAGE.
  */
 
-#include <stdint.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+
 #include <assert.h>
 #include <errno.h>
+#include <md5.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/param.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/md5.h>
-#include <xhyve/support/uuid.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/smbiostbl.h>
+#include <uuid.h>
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpacked"
+#include <machine/vmm.h>
+#include <vmmapi.h>
 
-#define	GB (1024ULL*1024*1024)
+#include "bhyverun.h"
+#include "smbiostbl.h"
 
-#define SMBIOS_BASE 0xF1000
+#define	MB			(1024*1024)
+#define	GB			(1024ULL*1024*1024)
+
+#define SMBIOS_BASE		0xF1000
 
 /* BHYVE_ACPI_BASE - SMBIOS_BASE) */
-#define	SMBIOS_MAX_LENGTH (0xF2400 - 0xF1000)
+#define	SMBIOS_MAX_LENGTH	(0xF2400 - 0xF1000)
 
-#define	SMBIOS_TYPE_BIOS 0
-#define	SMBIOS_TYPE_SYSTEM 1
-#define	SMBIOS_TYPE_CHASSIS 3
-#define	SMBIOS_TYPE_PROCESSOR 4
-#define	SMBIOS_TYPE_MEMARRAY 16
-#define	SMBIOS_TYPE_MEMDEVICE 17
-#define	SMBIOS_TYPE_MEMARRAYMAP 19
-#define	SMBIOS_TYPE_BOOT 32
-#define	SMBIOS_TYPE_EOT 127
+#define	SMBIOS_TYPE_BIOS	0
+#define	SMBIOS_TYPE_SYSTEM	1
+#define	SMBIOS_TYPE_CHASSIS	3
+#define	SMBIOS_TYPE_PROCESSOR	4
+#define	SMBIOS_TYPE_MEMARRAY	16
+#define	SMBIOS_TYPE_MEMDEVICE	17
+#define	SMBIOS_TYPE_MEMARRAYMAP	19
+#define	SMBIOS_TYPE_BOOT	32
+#define	SMBIOS_TYPE_EOT		127
 
 struct smbios_structure {
 	uint8_t		type;
@@ -107,7 +109,7 @@ struct smbios_entry_point {
 #define	SMBIOS_FL_PCI		0x00000080	/* PCI is supported */
 #define	SMBIOS_FL_SHADOW	0x00001000	/* BIOS shadowing is allowed */
 #define	SMBIOS_FL_CDBOOT	0x00008000	/* Boot from CD is supported */
-// #define	SMBIOS_FL_SELBOOT	0x00010000	/* Selectable Boot supported */
+#define	SMBIOS_FL_SELBOOT	0x00010000	/* Selectable Boot supported */
 #define	SMBIOS_FL_EDD		0x00080000	/* EDD Spec is supported */
 
 #define	SMBIOS_XB1_FL_ACPI	0x00000001	/* ACPI is supported */
@@ -301,9 +303,7 @@ struct smbios_table_type127 {
 	struct smbios_structure	header;
 } __packed;
 
-#pragma clang diagnostic pop
-
-static struct smbios_table_type0 smbios_type0_template = {
+struct smbios_table_type0 smbios_type0_template = {
 	{ SMBIOS_TYPE_BIOS, sizeof (struct smbios_table_type0), 0 },
 	1,	/* bios vendor string */
 	2,	/* bios version string */
@@ -319,14 +319,14 @@ static struct smbios_table_type0 smbios_type0_template = {
 	0xff	/* embedded controller firmware minor release */
 };
 
-static const char *smbios_type0_strings[] = {
+const char *smbios_type0_strings[] = {
 	"BHYVE",	/* vendor string */
 	"1.00",		/* bios version string */
 	"03/14/2014",	/* bios release date string */
 	NULL
 };
 
-static struct smbios_table_type1 smbios_type1_template = {
+struct smbios_table_type1 smbios_type1_template = {
 	{ SMBIOS_TYPE_SYSTEM, sizeof (struct smbios_table_type1), 0 },
 	1,		/* manufacturer string */
 	2,		/* product string */
@@ -342,7 +342,7 @@ static int smbios_type1_initializer(struct smbios_structure *template_entry,
     const char **template_strings, char *curaddr, char **endaddr,
     uint16_t *n, uint16_t *size);
 
-static const char *smbios_type1_strings[] = {
+const char *smbios_type1_strings[] = {
 	" ",		/* manufacturer string */
 	"BHYVE",	/* product name string */
 	"1.0",		/* version string */
@@ -352,7 +352,7 @@ static const char *smbios_type1_strings[] = {
 	NULL
 };
 
-static struct smbios_table_type3 smbios_type3_template = {
+struct smbios_table_type3 smbios_type3_template = {
 	{ SMBIOS_TYPE_CHASSIS, sizeof (struct smbios_table_type3), 0 },
 	1,		/* manufacturer string */
 	SMBIOS_CHT_UNKNOWN,
@@ -370,7 +370,7 @@ static struct smbios_table_type3 smbios_type3_template = {
 	5		/* sku number string */
 };
 
-static const char *smbios_type3_strings[] = {
+const char *smbios_type3_strings[] = {
 	" ",		/* manufacturer string */
 	"1.0",		/* version string */
 	"None",		/* serial number string */
@@ -379,34 +379,34 @@ static const char *smbios_type3_strings[] = {
 	NULL
 };
 
-static struct smbios_table_type4 smbios_type4_template = {
+struct smbios_table_type4 smbios_type4_template = {
 	{ SMBIOS_TYPE_PROCESSOR, sizeof (struct smbios_table_type4), 0 },
 	1,		/* socket designation string */
 	SMBIOS_PRT_CENTRAL,
 	SMBIOS_PRF_OTHER,
-	2, /* manufacturer string */
-	0, /* cpuid */
-	3, /* version string */
-	0, /* voltage */
-	0, /* external clock frequency in mhz (0=unknown) */
-	0, /* maximum frequency in mhz (0=unknown) */
-	0, /* current frequency in mhz (0=unknown) */
+	2,		/* manufacturer string */
+	0,		/* cpuid */
+	3,		/* version string */
+	0,		/* voltage */
+	0,		/* external clock frequency in mhz (0=unknown) */
+	0,		/* maximum frequency in mhz (0=unknown) */
+	0,		/* current frequency in mhz (0=unknown) */
 	SMBIOS_PRS_PRESENT | SMBIOS_PRS_ENABLED,
 	SMBIOS_PRU_NONE,
-	(uint16_t) (-1), /* l1 cache handle */
-	(uint16_t) (-1), /* l2 cache handle */
-	(uint16_t) (-1), /* l3 cache handle */
-	4, /* serial number string */
-	5, /* asset tag string */
-	6, /* part number string */
-	0, /* cores per socket (0=unknown) */
-	0, /* enabled cores per socket (0=unknown) */
-	0, /* threads per socket (0=unknown) */
+	-1,		/* l1 cache handle */
+	-1,		/* l2 cache handle */
+	-1,		/* l3 cache handle */
+	4,		/* serial number string */
+	5,		/* asset tag string */
+	6,		/* part number string */
+	0,		/* cores per socket (0=unknown) */
+	0,		/* enabled cores per socket (0=unknown) */
+	0,		/* threads per socket (0=unknown) */
 	SMBIOS_PFL_64B,
 	SMBIOS_PRF_OTHER
 };
 
-static const char *smbios_type4_strings[] = {
+const char *smbios_type4_strings[] = {
 	" ",		/* socket designation string */
 	" ",		/* manufacturer string */
 	" ",		/* version string */
@@ -420,48 +420,48 @@ static int smbios_type4_initializer(struct smbios_structure *template_entry,
     const char **template_strings, char *curaddr, char **endaddr,
     uint16_t *n, uint16_t *size);
 
-static struct smbios_table_type16 smbios_type16_template = {
+struct smbios_table_type16 smbios_type16_template = {
 	{ SMBIOS_TYPE_MEMARRAY, sizeof (struct smbios_table_type16),  0 },
 	SMBIOS_MAL_SYSMB,
 	SMBIOS_MAU_SYSTEM,
 	SMBIOS_MAE_NONE,
-	0x80000000, /* max mem capacity in kb (0x80000000=use extended) */
-	(uint16_t) (-1), /* handle of error (if any) */
-	0, /* number of slots or sockets (TBD) */
-	0 /* extended maximum memory capacity in bytes (TBD) */
+	0x80000000,	/* max mem capacity in kb (0x80000000=use extended) */
+	-1,		/* handle of error (if any) */
+	0,		/* number of slots or sockets (TBD) */
+	0		/* extended maximum memory capacity in bytes (TBD) */
 };
 
 static int smbios_type16_initializer(struct smbios_structure *template_entry,
     const char **template_strings, char *curaddr, char **endaddr,
     uint16_t *n, uint16_t *size);
 
-static struct smbios_table_type17 smbios_type17_template = {
+struct smbios_table_type17 smbios_type17_template = {
 	{ SMBIOS_TYPE_MEMDEVICE, sizeof (struct smbios_table_type17),  0 },
-	(uint16_t) (-1), /* handle of physical memory array */
-	(uint16_t) (-1), /* handle of memory error data */
-	64, /* total width in bits including ecc */
-	64, /* data width in bits */
-	0x7fff, /* size in bytes (0x7fff=use extended)*/
+	-1,		/* handle of physical memory array */
+	-1,		/* handle of memory error data */
+	64,		/* total width in bits including ecc */
+	64,		/* data width in bits */
+	0x7fff,		/* size in bytes (0x7fff=use extended)*/
 	SMBIOS_MDFF_UNKNOWN,
-	0, /* set (0x00=none, 0xff=unknown) */
-	1, /* device locator string */
-	2, /* physical bank locator string */
+	0,		/* set (0x00=none, 0xff=unknown) */
+	1,		/* device locator string */
+	2,		/* physical bank locator string */
 	SMBIOS_MDT_UNKNOWN,
 	SMBIOS_MDF_UNKNOWN,
-	0, /* maximum memory speed in mhz (0=unknown) */
-	3, /* manufacturer string */
-	4, /* serial number string */
-	5, /* asset tag string */
-	6, /* part number string */
-	0, /* attributes (0=unknown rank information) */
-	0, /* extended size in mb (TBD) */
-	0, /* current speed in mhz (0=unknown) */
-	0, /* minimum voltage in mv (0=unknown) */
-	0, /* maximum voltage in mv (0=unknown) */
-	0 /* configured voltage in mv (0=unknown) */
+	0,		/* maximum memory speed in mhz (0=unknown) */
+	3,		/* manufacturer string */
+	4,		/* serial number string */
+	5,		/* asset tag string */
+	6,		/* part number string */
+	0,		/* attributes (0=unknown rank information) */
+	0,		/* extended size in mb (TBD) */
+	0,		/* current speed in mhz (0=unknown) */
+	0,		/* minimum voltage in mv (0=unknown) */
+	0,		/* maximum voltage in mv (0=unknown) */
+	0		/* configured voltage in mv (0=unknown) */
 };
 
-static const char *smbios_type17_strings[] = {
+const char *smbios_type17_strings[] = {
 	" ",		/* device locator string */
 	" ",		/* physical bank locator string */
 	" ",		/* manufacturer string */
@@ -475,27 +475,27 @@ static int smbios_type17_initializer(struct smbios_structure *template_entry,
     const char **template_strings, char *curaddr, char **endaddr,
     uint16_t *n, uint16_t *size);
 
-static struct smbios_table_type19 smbios_type19_template = {
+struct smbios_table_type19 smbios_type19_template = {
 	{ SMBIOS_TYPE_MEMARRAYMAP, sizeof (struct smbios_table_type19),  0 },
-	0xffffffff, /* starting phys addr in kb (0xffffffff=use ext) */
-	0xffffffff, /* ending phys addr in kb (0xffffffff=use ext) */
-	(uint16_t) (-1), /* physical memory array handle */
-	1, /* number of devices that form a row */
-	0, /* extended starting phys addr in bytes (TDB) */
-	0 /* extended ending phys addr in bytes (TDB) */
+	0xffffffff,	/* starting phys addr in kb (0xffffffff=use ext) */
+	0xffffffff,	/* ending phys addr in kb (0xffffffff=use ext) */
+	-1,		/* physical memory array handle */
+	1,		/* number of devices that form a row */
+	0,		/* extended starting phys addr in bytes (TDB) */
+	0		/* extended ending phys addr in bytes (TDB) */
 };
 
 static int smbios_type19_initializer(struct smbios_structure *template_entry,
     const char **template_strings, char *curaddr, char **endaddr,
     uint16_t *n, uint16_t *size);
 
-static struct smbios_table_type32 smbios_type32_template = {
+struct smbios_table_type32 smbios_type32_template = {
 	{ SMBIOS_TYPE_BOOT, sizeof (struct smbios_table_type32),  0 },
 	{ 0, 0, 0, 0, 0, 0 },
 	SMBIOS_BOOT_NORMAL
 };
 
-static struct smbios_table_type127 smbios_type127_template = {
+struct smbios_table_type127 smbios_type127_template = {
 	{ SMBIOS_TYPE_EOT, sizeof (struct smbios_table_type127),  0 }
 };
 
@@ -539,8 +539,8 @@ static uint16_t type16_handle;
 
 static int
 smbios_generic_initializer(struct smbios_structure *template_entry,
-	const char **template_strings, char *curaddr, char **endaddr, uint16_t *n,
-	UNUSED uint16_t *size)
+    const char **template_strings, char *curaddr, char **endaddr,
+    uint16_t *n, uint16_t *size)
 {
 	struct smbios_structure *entry;
 
@@ -556,7 +556,7 @@ smbios_generic_initializer(struct smbios_structure *template_entry,
 			int len;
 
 			string = template_strings[i];
-			len = (int) (strlen(string) + 1);
+			len = strlen(string) + 1;
 			memcpy(curaddr, string, len);
 			curaddr += len;
 		}
@@ -609,8 +609,8 @@ smbios_type1_initializer(struct smbios_structure *template_entry,
 			return (-1);
 
 		MD5Init(&mdctx);
-		MD5Update(&mdctx, vmname, ((unsigned) strlen(vmname)));
-		MD5Update(&mdctx, hostname, ((unsigned) sizeof(hostname)));
+		MD5Update(&mdctx, vmname, strlen(vmname));
+		MD5Update(&mdctx, hostname, sizeof(hostname));
 		MD5Final(digest, &mdctx);
 
 		/*
@@ -652,7 +652,7 @@ smbios_type4_initializer(struct smbios_structure *template_entry,
 		*endaddr += len - 1;
 		*(*endaddr) = '\0';
 		(*endaddr)++;
-		type4->socket = (uint8_t) (nstrings + 1);
+		type4->socket = nstrings + 1;
 		curaddr = *endaddr;
 	}
 
@@ -687,7 +687,7 @@ smbios_type17_initializer(struct smbios_structure *template_entry,
 	    curaddr, endaddr, n, size);
 	type17 = (struct smbios_table_type17 *)curaddr;
 	type17->arrayhand = type16_handle;
-	type17->xsize = (uint32_t) guest_lomem;
+	type17->xsize = guest_lomem;
 
 	if (guest_himem > 0) {
 		curaddr = *endaddr;
@@ -695,7 +695,7 @@ smbios_type17_initializer(struct smbios_structure *template_entry,
 		    curaddr, endaddr, n, size);
 		type17 = (struct smbios_table_type17 *)curaddr;
 		type17->arrayhand = type16_handle;
-		type17->xsize = (uint32_t) guest_himem;
+		type17->xsize = guest_himem;
 	}
 
 	return (0);
@@ -770,19 +770,19 @@ smbios_ep_finalizer(struct smbios_entry_point *smbios_ep, uint16_t len,
 }
 
 int
-smbios_build(void)
+smbios_build(struct vmctx *ctx)
 {
-	struct smbios_entry_point *smbios_ep;
-	uint16_t n;
-	uint16_t maxssize;
-	char *curaddr, *startaddr, *ststartaddr;
-	int i;
-	int err;
+	struct smbios_entry_point	*smbios_ep;
+	uint16_t			n;
+	uint16_t			maxssize;
+	char				*curaddr, *startaddr, *ststartaddr;
+	int				i;
+	int				err;
 
-	guest_lomem = xh_vm_get_lowmem_size();
-	guest_himem = xh_vm_get_highmem_size();
+	guest_lomem = vm_get_lowmem_size(ctx);
+	guest_himem = vm_get_highmem_size(ctx);
 
-	startaddr = paddr_guest2host(SMBIOS_BASE, SMBIOS_MAX_LENGTH);
+	startaddr = paddr_guest2host(ctx, SMBIOS_BASE, SMBIOS_MAX_LENGTH);
 	if (startaddr == NULL) {
 		fprintf(stderr, "smbios table requires mapped mem\n");
 		return (ENOMEM);
@@ -800,10 +800,10 @@ smbios_build(void)
 	maxssize = 0;
 	for (i = 0; smbios_template[i].entry != NULL; i++) {
 		struct smbios_structure	*entry;
-		const char **strings;
-		initializer_func_t initializer;
-		char *endaddr;
-		uint16_t size;
+		const char		**strings;
+		initializer_func_t      initializer;
+		char			*endaddr;
+		uint16_t		size;
 
 		entry = smbios_template[i].entry;
 		strings = smbios_template[i].strings;
@@ -821,8 +821,7 @@ smbios_build(void)
 	}
 
 	assert(curaddr - startaddr < SMBIOS_MAX_LENGTH);
-	smbios_ep_finalizer(smbios_ep, ((uint16_t) (curaddr - ststartaddr)), n,
-		maxssize);
+	smbios_ep_finalizer(smbios_ep, curaddr - ststartaddr, n, maxssize);
 
 	return (0);
 }

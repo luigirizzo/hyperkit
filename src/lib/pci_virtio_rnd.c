@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2014 Nahanni Systems Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -32,57 +31,57 @@
  * once it has been seeded at bootup.
  */
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <pthread.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <errno.h>
-#include <assert.h>
-#include <sys/param.h>
-#include <sys/uio.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/linker_set.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/virtio.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
-#define VTRND_RINGSZ 64
+#include <sys/param.h>
+#include <sys/linker_set.h>
+#include <sys/uio.h>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <assert.h>
+#include <pthread.h>
+
+#include "bhyverun.h"
+#include "pci_emul.h"
+#include "virtio.h"
+
+#define VTRND_RINGSZ	64
 
 
 static int pci_vtrnd_debug;
 #define DPRINTF(params) if (pci_vtrnd_debug) printf params
 #define WPRINTF(params) printf params
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 /*
  * Per-device softc
  */
 struct pci_vtrnd_softc {
 	struct virtio_softc vrsc_vs;
-	struct vqueue_info vrsc_vq;
-	pthread_mutex_t vrsc_mtx;
-	uint64_t vrsc_cfg;
-	int vrsc_fd;
+	struct vqueue_info  vrsc_vq;
+	pthread_mutex_t     vrsc_mtx;
+	uint64_t            vrsc_cfg;
+	int                 vrsc_fd;
 };
-#pragma clang diagnostic pop
 
 static void pci_vtrnd_reset(void *);
 static void pci_vtrnd_notify(void *, struct vqueue_info *);
 
 static struct virtio_consts vtrnd_vi_consts = {
-	"vtrnd", /* our name */
-	1, /* we support 1 virtqueue */
-	0, /* config reg size */
-	pci_vtrnd_reset, /* reset */
-	pci_vtrnd_notify, /* device-wide qnotify */
-	NULL, /* read virtio config */
-	NULL, /* write virtio config */
-	NULL, /* apply negotiated features */
-	0, /* our capabilities */
+	"vtrnd",		/* our name */
+	1,			/* we support 1 virtqueue */
+	0,			/* config reg size */
+	pci_vtrnd_reset,	/* reset */
+	pci_vtrnd_notify,	/* device-wide qnotify */
+	NULL,			/* read virtio config */
+	NULL,			/* write virtio config */
+	NULL,			/* apply negotiated features */
+	0,			/* our capabilities */
 };
 
 
@@ -116,7 +115,7 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 	while (vq_has_descs(vq)) {
 		vq_getchain(vq, &idx, &iov, 1, NULL);
 
-		len = (int) read(sc->vrsc_fd, iov.iov_base, iov.iov_len);
+		len = read(sc->vrsc_fd, iov.iov_base, iov.iov_len);
 
 		DPRINTF(("vtrnd: vtrnd_notify(): %d\r\n", len));
 
@@ -126,14 +125,14 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 		/*
 		 * Release this chain and handle more
 		 */
-		vq_relchain(vq, idx, ((uint32_t) len));
+		vq_relchain(vq, idx, len);
 	}
 	vq_endchains(vq, 1);	/* Generate interrupt if appropriate. */
 }
 
 
 static int
-pci_vtrnd_init(struct pci_devinst *pi, UNUSED char *opts)
+pci_vtrnd_init(struct vmctx *ctx, struct pci_devinst *pi, char *opts)
 {
 	struct pci_vtrnd_softc *sc;
 	int fd;
@@ -150,7 +149,7 @@ pci_vtrnd_init(struct pci_devinst *pi, UNUSED char *opts)
 	/*
 	 * Check that device is seeded and non-blocking.
 	 */
-	len = (int) read(fd, &v, sizeof(v));
+	len = read(fd, &v, sizeof(v));
 	if (len <= 0) {
 		WPRINTF(("vtrnd: /dev/random not ready, read(): %d", len));
 		return (1);
@@ -181,7 +180,7 @@ pci_vtrnd_init(struct pci_devinst *pi, UNUSED char *opts)
 }
 
 
-static struct pci_devemu pci_de_vrnd = {
+struct pci_devemu pci_de_vrnd = {
 	.pe_emu =	"virtio-rnd",
 	.pe_init =	pci_vtrnd_init,
 	.pe_barwrite =	vi_pci_write,

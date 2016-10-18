@@ -33,18 +33,19 @@
  *  cc mevent_test.c mevent.c -lpthread
  */
 
-#include <stdint.h>
 #include <sys/types.h>
+#include <sys/stdint.h>
 #include <sys/sysctl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <machine/cpufunc.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
 
-#include <xhyve/mevent.h>
+#include "mevent.h"
 
 #define TEST_PORT	4321
 
@@ -61,15 +62,6 @@ char *vmname = "test vm";
 /* Number of timer events to capture */
 #define TEVSZ	4096
 uint64_t tevbuf[TEVSZ];
-
-static __inline uint64_t rdtsc(void)
-{
-	unsigned a, d;
-	__asm__ __volatile__ ("cpuid");
-	__asm__ __volatile__ ("rdtsc" : "=a" (a), "=d" (d));
-
-	return (((uint64_t) a) | (((uint64_t) d) << 32));
-}
 
 static void
 timer_print(void)
@@ -95,7 +87,7 @@ timer_print(void)
 			max = diff;
 	}
 
-	printf("timers done: usecs, min %llu, max %llu, mean %llu\n", min, max,
+	printf("timers done: usecs, min %ld, max %ld, mean %ld\n", min, max,
 	    sum/(TEVSZ - 1));
 }
 
@@ -119,7 +111,7 @@ timer_callback(int fd, enum ev_type type, void *param)
 #ifdef MEVENT_ECHO
 struct esync {
 	pthread_mutex_t	e_mt;
-	pthread_cond_t	e_cond;
+	pthread_cond_t	e_cond;       
 };
 
 static void
@@ -254,14 +246,11 @@ acceptor(void *param)
 	return (NULL);
 }
 
-int
-main(void)
+main()
 {
 	pthread_t tid;
 
 	pthread_create(&tid, NULL, acceptor, NULL);
 
 	mevent_dispatch();
-
-	return (0);
 }

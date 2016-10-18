@@ -26,6 +26,9 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _RTC_H_
+#define _RTC_H_
 
-void rtc_init(int use_localtime);
+void	rtc_init(struct vmctx *ctx, int use_localtime);
+
+#endif /* _RTC_H_ */

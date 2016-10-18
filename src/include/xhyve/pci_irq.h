@@ -27,16 +27,19 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef __PCI_IRQ_H__
+#define	__PCI_IRQ_H__
 
 struct pci_devinst;
 
-void pci_irq_assert(struct pci_devinst *pi);
-void pci_irq_deassert(struct pci_devinst *pi);
-void pci_irq_init(void);
-void pci_irq_reserve(int irq);
-void pci_irq_use(int irq);
-int pirq_alloc_pin(void);
-int pirq_irq(int pin);
-uint8_t pirq_read(int pin);
-void pirq_write(int pin, uint8_t val);
+void	pci_irq_assert(struct pci_devinst *pi);
+void	pci_irq_deassert(struct pci_devinst *pi);
+void	pci_irq_init(struct vmctx *ctx);
+void	pci_irq_reserve(int irq);
+void	pci_irq_use(int irq);
+int	pirq_alloc_pin(struct vmctx *ctx);
+int	pirq_irq(int pin);
+uint8_t	pirq_read(int pin);
+void	pirq_write(struct vmctx *ctx, int pin, uint8_t val);
+
+#endif

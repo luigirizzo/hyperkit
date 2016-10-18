@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2012 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -33,30 +32,33 @@
  * so it can be searched within the range.
  */
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <pthread.h>
-#include <errno.h>
-#include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/tree.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/mem.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
+#include <sys/types.h>
+#include <sys/tree.h>
+#include <sys/errno.h>
+#include <machine/vmm.h>
+#include <machine/vmm_instruction_emul.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <pthread.h>
+
+#include "mem.h"
+
 struct mmio_rb_range {
-	RB_ENTRY(mmio_rb_range) mr_link; /* RB tree links */
-	struct mem_range mr_param;
-	uint64_t mr_base;
-	uint64_t mr_end;
+	RB_ENTRY(mmio_rb_range)	mr_link;	/* RB tree links */
+	struct mem_range	mr_param;
+	uint64_t                mr_base;
+	uint64_t                mr_end;
 };
-#pragma clang diagnostic pop
 
 struct mmio_rb_tree;
 RB_PROTOTYPE(mmio_rb_tree, mmio_rb_range, mr_link, mmio_rb_range_compare);
 
-static RB_HEAD(mmio_rb_tree, mmio_rb_range) mmio_rb_root, mmio_rb_fallback;
+RB_HEAD(mmio_rb_tree, mmio_rb_range) mmio_rb_root, mmio_rb_fallback;
 
 /*
  * Per-vCPU cache. Since most accesses from a vCPU will be to
@@ -91,7 +93,7 @@ mmio_rb_lookup(struct mmio_rb_tree *rbt, uint64_t addr,
 		*entry = res;
 		return (0);
 	}
-
+	
 	return (ENOENT);
 }
 
@@ -130,40 +132,38 @@ mmio_rb_dump(struct mmio_rb_tree *rbt)
 }
 #endif
 
-RB_GENERATE(mmio_rb_tree, mmio_rb_range, mr_link, mmio_rb_range_compare)
+RB_GENERATE(mmio_rb_tree, mmio_rb_range, mr_link, mmio_rb_range_compare);
 
 static int
-mem_read(UNUSED void *unused, int vcpu, uint64_t gpa, uint64_t *rval, int size,
-	void *arg)
+mem_read(void *ctx, int vcpu, uint64_t gpa, uint64_t *rval, int size, void *arg)
 {
 	int error;
 	struct mem_range *mr = arg;
 
-	error = (*mr->handler)(vcpu, MEM_F_READ, gpa, size, rval, mr->arg1,
-		mr->arg2);
+	error = (*mr->handler)(ctx, vcpu, MEM_F_READ, gpa, size,
+			       rval, mr->arg1, mr->arg2);
 	return (error);
 }
 
 static int
-mem_write(UNUSED void* unused, int vcpu, uint64_t gpa, uint64_t wval, int size,
-	void *arg)
+mem_write(void *ctx, int vcpu, uint64_t gpa, uint64_t wval, int size, void *arg)
 {
 	int error;
 	struct mem_range *mr = arg;
 
-	error = (*mr->handler)(vcpu, MEM_F_WRITE, gpa, size, &wval, mr->arg1,
-		mr->arg2);
+	error = (*mr->handler)(ctx, vcpu, MEM_F_WRITE, gpa, size,
+			       &wval, mr->arg1, mr->arg2);
 	return (error);
 }
 
 int
-emulate_mem(int vcpu, uint64_t paddr, struct vie *vie,
-	struct vm_guest_paging *paging)
+emulate_mem(struct vmctx *ctx, int vcpu, uint64_t paddr, struct vie *vie,
+    struct vm_guest_paging *paging)
 
 {
 	struct mmio_rb_range *entry;
 	int err, immutable;
-
+	
 	pthread_rwlock_rdlock(&mmio_rwlock);
 	/*
 	 * First check the per-vCPU cache
@@ -178,7 +178,7 @@ emulate_mem(int vcpu, uint64_t paddr, struct vie *vie,
 	if (entry == NULL) {
 		if (mmio_rb_lookup(&mmio_rb_root, paddr, &entry) == 0) {
 			/* Update the per-vCPU cache */
-			mmio_hint[vcpu] = entry;
+			mmio_hint[vcpu] = entry;			
 		} else if (mmio_rb_lookup(&mmio_rb_fallback, paddr, &entry)) {
 			pthread_rwlock_unlock(&mmio_rwlock);
 			return (ESRCH);
@@ -202,8 +202,8 @@ emulate_mem(int vcpu, uint64_t paddr, struct vie *vie,
 	if (immutable)
 		pthread_rwlock_unlock(&mmio_rwlock);
 
-	err = xh_vm_emulate_instruction(vcpu, paddr, vie, paging, mem_read,
-		mem_write, &entry->mr_param);
+	err = vmm_emulate_instruction(ctx, vcpu, paddr, vie, paging,
+				      mem_read, mem_write, &entry->mr_param);
 
 	if (!immutable)
 		pthread_rwlock_unlock(&mmio_rwlock);
@@ -220,7 +220,7 @@ register_mem_int(struct mmio_rb_tree *rbt, struct mem_range *memp)
 	err = 0;
 
 	mrp = malloc(sizeof(struct mmio_rb_range));
-
+	
 	if (mrp != NULL) {
 		mrp->mr_param = *memp;
 		mrp->mr_base = memp->base;
@@ -251,23 +251,23 @@ register_mem_fallback(struct mem_range *memp)
 	return (register_mem_int(&mmio_rb_fallback, memp));
 }
 
-int
+int 
 unregister_mem(struct mem_range *memp)
 {
 	struct mem_range *mr;
 	struct mmio_rb_range *entry = NULL;
 	int err, i;
-
+	
 	pthread_rwlock_wrlock(&mmio_rwlock);
 	err = mmio_rb_lookup(&mmio_rb_root, memp->base, &entry);
 	if (err == 0) {
 		mr = &entry->mr_param;
 		assert(mr->name == memp->name);
-		assert(mr->base == memp->base && mr->size == memp->size);
+		assert(mr->base == memp->base && mr->size == memp->size); 
 		assert((mr->flags & MEM_F_IMMUTABLE) == 0);
 		RB_REMOVE(mmio_rb_tree, &mmio_rb_root, entry);
 
-		/* flush Per-vCPU cache */
+		/* flush Per-vCPU cache */	
 		for (i=0; i < VM_MAXCPU; i++) {
 			if (mmio_hint[i] == entry)
 				mmio_hint[i] = NULL;
@@ -277,7 +277,7 @@ unregister_mem(struct mem_range *memp)
 
 	if (entry)
 		free(entry);
-
+	
 	return (err);
 }
 

@@ -1,7 +1,6 @@
 /*-
  * Copyright (c) 2014 Hudson River Trading LLC
  * Written by: John H. Baldwin <jhb@FreeBSD.org>
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,8 +25,15 @@
  * SUCH DAMAGE.
  */
 
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/ioapic.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+
+#include <machine/vmm.h>
+#include <vmmapi.h>
+
+#include "ioapic.h"
 
 /*
  * Assign PCI INTx interrupts to I/O APIC pins in a round-robin
@@ -41,10 +47,10 @@
 static int pci_pins;
 
 void
-ioapic_init(void)
+ioapic_init(struct vmctx *ctx)
 {
 
-	if (xh_vm_ioapic_pincount(&pci_pins) < 0) {
+	if (vm_ioapic_pincount(ctx, &pci_pins) < 0) {
 		pci_pins = 0;
 		return;
 	}
