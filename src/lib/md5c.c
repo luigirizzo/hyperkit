@@ -28,7 +28,7 @@
 
 #include <stdint.h>
 #include <string.h>
-#include <xhyve/support/md5.h>
+#include <support/md5.h>
 
 static void MD5Transform(u_int32_t [4], const unsigned char [64]);
 

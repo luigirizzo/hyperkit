@@ -29,7 +29,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <xhyve/support/segments.h>
+#include <support/segments.h>
 
 #ifndef CTASSERT /* Allow lint to override */
 #define	CTASSERT(x) _CTASSERT(x, __LINE__)

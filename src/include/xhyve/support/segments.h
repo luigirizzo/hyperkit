@@ -37,7 +37,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <xhyve/support/misc.h>
+#include <support/misc.h>
 
 // /*
 //  * X86 Segmentation Data Structures and definitions

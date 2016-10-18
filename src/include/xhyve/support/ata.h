@@ -28,7 +28,7 @@
 
 #pragma once
 
-#include <xhyve/support/misc.h>
+#include <support/misc.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpadded"

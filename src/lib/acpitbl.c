@@ -57,11 +57,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/acpi.h>
+#include <support/misc.h>
+#include <vmm/vmm_api.h>
+#include <xhyve.h>
+#include <pci_emul.h>
+#include <acpi.h>
 
 #define XHYVE_ACPI_BASE 0xf2400
 #define XHYVE_ACPI_SIZE 0xdc00

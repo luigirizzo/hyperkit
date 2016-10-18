@@ -31,7 +31,7 @@
 
 #pragma once
 
-#include <xhyve/support/bitset.h>
+#include <support/bitset.h>
 
 #define	CPU_MAXSIZE	32
 

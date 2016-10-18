@@ -48,30 +48,30 @@
 
 #include <dispatch/dispatch.h>
 
-#include <xhyve/support/misc.h>
-#include <xhyve/support/atomic.h>
-#include <xhyve/support/segments.h>
-#include <xhyve/support/cpuset.h>
-#include <xhyve/vmm/vmm_api.h>
+#include <support/misc.h>
+#include <support/atomic.h>
+#include <support/segments.h>
+#include <support/cpuset.h>
+#include <vmm/vmm_api.h>
 
-#include <xhyve/xhyve.h>
-#include <xhyve/acpi.h>
-#include <xhyve/inout.h>
-#include <xhyve/dbgport.h>
-#include <xhyve/ioapic.h>
-#include <xhyve/mem.h>
-#include <xhyve/mevent.h>
-#include <xhyve/mptbl.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/pci_irq.h>
-#include <xhyve/pci_lpc.h>
-#include <xhyve/smbiostbl.h>
-#include <xhyve/xmsr.h>
-#include <xhyve/rtc.h>
+#include <xhyve.h>
+#include <acpi.h>
+#include <inout.h>
+#include <dbgport.h>
+#include <ioapic.h>
+#include <mem.h>
+#include <mevent.h>
+#include <mptbl.h>
+#include <pci_emul.h>
+#include <pci_irq.h>
+#include <pci_lpc.h>
+#include <smbiostbl.h>
+#include <xmsr.h>
+#include <rtc.h>
 
-#include <xhyve/firmware/kexec.h>
-#include <xhyve/firmware/fbsd.h>
-#include <xhyve/firmware/bootrom.h>
+#include <firmware/kexec.h>
+#include <firmware/fbsd.h>
+#include <firmware/bootrom.h>
 
 #ifdef HAVE_OCAML
 #include <caml/callback.h>

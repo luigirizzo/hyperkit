@@ -32,18 +32,18 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <sys/uio.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_lapic.h>
-#include <xhyve/vmm/vmm_instruction_emul.h>
-#include <xhyve/vmm/vmm_callout.h>
-#include <xhyve/vmm/vmm_stat.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/vmm/io/vatpic.h>
-#include <xhyve/vmm/io/vhpet.h>
-#include <xhyve/vmm/io/vioapic.h>
-#include <xhyve/vmm/io/vrtc.h>
+#include <support/misc.h>
+#include <support/specialreg.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_lapic.h>
+#include <vmm/vmm_instruction_emul.h>
+#include <vmm/vmm_callout.h>
+#include <vmm/vmm_stat.h>
+#include <vmm/vmm_api.h>
+#include <vmm/io/vatpic.h>
+#include <vmm/io/vhpet.h>
+#include <vmm/io/vioapic.h>
+#include <vmm/io/vrtc.h>
 
 static struct vm *vm;
 static int memflags;

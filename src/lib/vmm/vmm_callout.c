@@ -37,8 +37,8 @@
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm_callout.h>
+#include <support/misc.h>
+#include <vmm/vmm_callout.h>
 
 #define callout_cmp(a, b) ((a)->timeout < (b)->timeout)
 
