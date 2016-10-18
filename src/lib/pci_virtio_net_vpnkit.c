@@ -68,15 +68,15 @@
 #include <sys/time.h>
 #include <net/ethernet.h>
 #include <uuid/uuid.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/atomic.h>
-#include <xhyve/support/linker_set.h>
-#include <xhyve/support/md5.h>
-#include <xhyve/support/uuid.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/mevent.h>
-#include <xhyve/virtio.h>
+#include <support/misc.h>
+#include <support/atomic.h>
+#include <support/linker_set.h>
+#include <support/md5.h>
+#include <support/uuid.h>
+#include <xhyve.h>
+#include <pci_emul.h>
+#include <mevent.h>
+#include <virtio.h>
 
 #define WPRINTF(format, ...) printf(format, __VA_ARGS__)
 

@@ -29,7 +29,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <xhyve/support/linker_set.h>
+#include <support/linker_set.h>
 
 typedef int (*mem_func_t)(int vcpu, int dir, uint64_t addr, int size,
 	uint64_t *val, void *arg1, long arg2);

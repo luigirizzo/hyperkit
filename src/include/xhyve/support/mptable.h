@@ -28,7 +28,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <xhyve/support/misc.h>
+#include <support/misc.h>
 
 enum busTypes {
     NOBUS = 0,

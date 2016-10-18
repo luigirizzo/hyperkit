@@ -32,13 +32,13 @@
 #include <errno.h>
 #include <assert.h>
 #include <sys/uio.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/linker_set.h>
-#include <xhyve/support/psl.h>
-#include <xhyve/support/segments.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/inout.h>
+#include <support/misc.h>
+#include <support/linker_set.h>
+#include <support/psl.h>
+#include <support/segments.h>
+#include <vmm/vmm_api.h>
+#include <xhyve.h>
+#include <inout.h>
 
 SET_DECLARE(inout_port_set, struct inout_port);
 

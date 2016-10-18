@@ -41,9 +41,9 @@
 #include <assert.h>
 #include <errno.h>
 #include <sys/mman.h>
-#include <xhyve/support/ns16550.h>
-#include <xhyve/mevent.h>
-#include <xhyve/uart_emul.h>
+#include <support/ns16550.h>
+#include <mevent.h>
+#include <uart_emul.h>
 
 #define	COM1_BASE      	0x3F8
 #define COM1_IRQ	4

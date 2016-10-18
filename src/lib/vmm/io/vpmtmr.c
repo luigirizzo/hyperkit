@@ -28,10 +28,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_callout.h>
-#include <xhyve/vmm/io/vpmtmr.h>
+#include <support/misc.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_callout.h>
+#include <vmm/io/vpmtmr.h>
 
 /*
  * The ACPI Power Management timer is a free-running 24- or 32-bit

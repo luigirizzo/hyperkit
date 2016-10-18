@@ -29,10 +29,10 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/inout.h>
-#include <xhyve/pci_lpc.h>
+#include <support/misc.h>
+#include <vmm/vmm_api.h>
+#include <inout.h>
+#include <pci_lpc.h>
 
 #define KBD_DATA_PORT 0x60
 #define KBD_STS_CTL_PORT 0x64

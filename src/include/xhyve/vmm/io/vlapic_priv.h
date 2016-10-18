@@ -30,8 +30,8 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <xhyve/support/apicreg.h>
-#include <xhyve/vmm/vmm_callout.h>
+#include <support/apicreg.h>
+#include <vmm/vmm_callout.h>
 
 /*
  * APIC Register:		Offset	   Description

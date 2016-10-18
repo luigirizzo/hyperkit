@@ -30,11 +30,11 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/xmsr.h>
+#include <support/misc.h>
+#include <support/specialreg.h>
+#include <vmm/vmm_api.h>
+#include <xhyve.h>
+#include <xmsr.h>
 
 int
 emulate_wrmsr(UNUSED int vcpu, uint32_t num, UNUSED uint64_t val)

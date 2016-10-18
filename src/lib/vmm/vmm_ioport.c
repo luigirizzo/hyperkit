@@ -28,15 +28,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <errno.h>
-#include <xhyve/support/timerreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_instruction_emul.h>
-#include <xhyve/vmm/vmm_ioport.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/io/vatpic.h>
-#include <xhyve/vmm/io/vatpit.h>
-#include <xhyve/vmm/io/vpmtmr.h>
-#include <xhyve/vmm/io/vrtc.h>
+#include <support/timerreg.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_instruction_emul.h>
+#include <vmm/vmm_ioport.h>
+#include <vmm/vmm_ktr.h>
+#include <vmm/io/vatpic.h>
+#include <vmm/io/vatpit.h>
+#include <vmm/io/vpmtmr.h>
+#include <vmm/io/vrtc.h>
 
 #define	MAX_IOPORTS		1280
 

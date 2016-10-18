@@ -29,10 +29,10 @@
 
 #include <time.h>
 #include <assert.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/acpi.h>
-#include <xhyve/pci_lpc.h>
-#include <xhyve/rtc.h>
+#include <vmm/vmm_api.h>
+#include <acpi.h>
+#include <pci_lpc.h>
+#include <rtc.h>
 
 #define	IO_RTC 0x70
 

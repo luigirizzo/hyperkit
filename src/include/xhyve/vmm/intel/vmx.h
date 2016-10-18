@@ -30,9 +30,9 @@
 #pragma once
 
 #include <stddef.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/intel/vmcs.h>
+#include <support/misc.h>
+#include <vmm/vmm.h>
+#include <vmm/intel/vmcs.h>
 
 struct vmxcap {
 	int	set;

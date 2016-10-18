@@ -34,14 +34,14 @@
 #include <assert.h>
 #include <mach/mach.h>
 #include <mach/clock.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/rtc.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_callout.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/io/vatpic.h>
-#include <xhyve/vmm/io/vioapic.h>
-#include <xhyve/vmm/io/vrtc.h>
+#include <support/misc.h>
+#include <support/rtc.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_callout.h>
+#include <vmm/vmm_ktr.h>
+#include <vmm/io/vatpic.h>
+#include <vmm/io/vioapic.h>
+#include <vmm/io/vrtc.h>
 
 static const u_char bin2bcd_data[] = {
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,

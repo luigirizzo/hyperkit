@@ -29,9 +29,9 @@
 
 #include <stdint.h>
 #include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/inout.h>
-#include <xhyve/pci_lpc.h>
+#include <support/misc.h>
+#include <inout.h>
+#include <pci_lpc.h>
 
 static int
 post_data_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes,

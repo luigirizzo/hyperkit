@@ -30,10 +30,10 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/cpuset.h>
-#include <xhyve/support/segments.h>
-#include <xhyve/vmm/vmm_common.h>
+#include <support/misc.h>
+#include <support/cpuset.h>
+#include <support/segments.h>
+#include <vmm/vmm_common.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpadded"

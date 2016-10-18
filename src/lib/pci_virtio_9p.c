@@ -12,11 +12,11 @@
 #include <sys/un.h>
 #include <sys/uio.h>
 #include <arpa/inet.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/linker_set.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/virtio.h>
+#include <support/misc.h>
+#include <support/linker_set.h>
+#include <xhyve.h>
+#include <pci_emul.h>
+#include <virtio.h>
 
 #define VIRTIO_9P_MOUNT_TAG 1
 

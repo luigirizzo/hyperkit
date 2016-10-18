@@ -33,11 +33,11 @@
 #include <sys/sysctl.h>
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_vmx.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/intel/vmx.h>
-#include <xhyve/vmm/intel/vmx_msr.h>
+#include <support/misc.h>
+#include <support/specialreg.h>
+#include <vmm/vmm.h>
+#include <vmm/intel/vmx.h>
+#include <vmm/intel/vmx_msr.h>
 
 static bool
 vmx_ctl_allows_one_setting(uint64_t msr_val, int bitpos)

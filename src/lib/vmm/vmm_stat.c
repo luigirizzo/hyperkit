@@ -29,9 +29,9 @@
 
 #include <stdint.h>
 #include <errno.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_util.h>
-#include <xhyve/vmm/vmm_stat.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_util.h>
+#include <vmm/vmm_stat.h>
 
 /*
  * 'vst_num_elems' is the total number of addressable statistic elements

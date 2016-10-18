@@ -31,8 +31,8 @@
 #include <stdlib.h>
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_vmx.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm_mem.h>
+#include <support/misc.h>
+#include <vmm/vmm_mem.h>
 
 int
 vmm_mem_init(void)

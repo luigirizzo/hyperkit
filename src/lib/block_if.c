@@ -43,11 +43,11 @@
 #include <signal.h>
 #include <unistd.h>
 
-#include <xhyve/support/atomic.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/mevent.h>
-#include <xhyve/block_if.h>
-#include <xhyve/dtrace.h>
+#include <support/atomic.h>
+#include <xhyve.h>
+#include <mevent.h>
+#include <block_if.h>
+#include <dtrace.h>
 
 #include "mirage_block_c.h"
 

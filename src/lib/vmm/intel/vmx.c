@@ -35,25 +35,25 @@
 #include <assert.h>
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_vmx.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/atomic.h>
-#include <xhyve/support/psl.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_instruction_emul.h>
-#include <xhyve/vmm/vmm_lapic.h>
-#include <xhyve/vmm/vmm_host.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/vmm_stat.h>
-#include <xhyve/vmm/io/vatpic.h>
-#include <xhyve/vmm/io/vlapic.h>
-#include <xhyve/vmm/io/vlapic_priv.h>
-#include <xhyve/vmm/intel/vmx.h>
-#include <xhyve/vmm/intel/vmx_msr.h>
-#include <xhyve/vmm/x86.h>
-#include <xhyve/vmm/intel/vmx_controls.h>
-#include <xhyve/firmware/bootrom.h>
-#include <xhyve/dtrace.h>
+#include <support/misc.h>
+#include <support/atomic.h>
+#include <support/psl.h>
+#include <support/specialreg.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_instruction_emul.h>
+#include <vmm/vmm_lapic.h>
+#include <vmm/vmm_host.h>
+#include <vmm/vmm_ktr.h>
+#include <vmm/vmm_stat.h>
+#include <vmm/io/vatpic.h>
+#include <vmm/io/vlapic.h>
+#include <vmm/io/vlapic_priv.h>
+#include <vmm/intel/vmx.h>
+#include <vmm/intel/vmx_msr.h>
+#include <vmm/x86.h>
+#include <vmm/intel/vmx_controls.h>
+#include <firmware/bootrom.h>
+#include <dtrace.h>
 
 #define PROCBASED_CTLS_WINDOW_SETTING \
 	(PROCBASED_INT_WINDOW_EXITING | \

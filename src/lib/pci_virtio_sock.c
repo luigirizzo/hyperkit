@@ -51,9 +51,9 @@
 #include <unistd.h>
 #include <errno.h>
 
-#include <xhyve/pci_emul.h>
-#include <xhyve/virtio.h>
-#include <xhyve/xhyve.h>
+#include <pci_emul.h>
+#include <virtio.h>
+#include <xhyve.h>
 
 #define VTSOCK_RINGSZ 256
 

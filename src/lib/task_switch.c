@@ -34,11 +34,11 @@
 #include <sys/param.h>
 #include <sys/uio.h>
 
-#include <xhyve/support/psl.h>
-#include <xhyve/support/segments.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/xhyve.h>
+#include <support/psl.h>
+#include <support/segments.h>
+#include <support/specialreg.h>
+#include <vmm/vmm_api.h>
+#include <xhyve.h>
 
 /*
  * Using 'struct i386tss' is tempting but causes myriad sign extension

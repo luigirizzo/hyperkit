@@ -29,7 +29,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <xhyve/vmm/vmm.h>
+#include <vmm/vmm.h>
 
 /*
  * Emulate the decoded 'vie' instruction.

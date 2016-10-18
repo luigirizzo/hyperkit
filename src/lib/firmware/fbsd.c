@@ -75,11 +75,11 @@
 #include <sys/stat.h>
 #include <sys/disk.h>
 #include <sys/queue.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/segments.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/firmware/fbsd.h>
+#include <support/misc.h>
+#include <support/segments.h>
+#include <support/specialreg.h>
+#include <vmm/vmm_api.h>
+#include <firmware/fbsd.h>
 
 #define	I386_TSS_SIZE 104
 

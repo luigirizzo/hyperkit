@@ -42,13 +42,13 @@
 #include <sys/uio.h>
 #include <sys/ioctl.h>
 #include <sys/disk.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/linker_set.h>
-#include <xhyve/support/md5.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/virtio.h>
-#include <xhyve/block_if.h>
+#include <support/misc.h>
+#include <support/linker_set.h>
+#include <support/md5.h>
+#include <xhyve.h>
+#include <pci_emul.h>
+#include <virtio.h>
+#include <block_if.h>
 
 #define VTBLK_RINGSZ 128
 

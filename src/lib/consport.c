@@ -35,9 +35,9 @@
 #include <stdbool.h>
 #include <sys/types.h>
 #include <sys/select.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/inout.h>
-#include <xhyve/pci_lpc.h>
+#include <support/misc.h>
+#include <inout.h>
+#include <pci_lpc.h>
 
 #define	BVM_CONSOLE_PORT 0x220
 #define	BVM_CONS_SIG ('b' << 8 | 'v')

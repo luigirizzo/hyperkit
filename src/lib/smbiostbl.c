@@ -32,12 +32,12 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/param.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/md5.h>
-#include <xhyve/support/uuid.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/smbiostbl.h>
+#include <support/misc.h>
+#include <support/md5.h>
+#include <support/uuid.h>
+#include <vmm/vmm_api.h>
+#include <xhyve.h>
+#include <smbiostbl.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpacked"

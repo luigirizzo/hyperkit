@@ -30,8 +30,8 @@
 
 #include <stdint.h>
 #include <sys/time.h>
-#include <xhyve/support/cpuset.h>
-#include <xhyve/vmm/vmm_common.h>
+#include <support/cpuset.h>
+#include <vmm/vmm_common.h>
 
 struct iovec;
 

@@ -29,13 +29,13 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/i8259.h>
-#include <xhyve/support/apicreg.h>
-#include <xhyve/vmm/vmm_lapic.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/io/vatpic.h>
-#include <xhyve/vmm/io/vioapic.h>
+#include <support/misc.h>
+#include <support/i8259.h>
+#include <support/apicreg.h>
+#include <vmm/vmm_lapic.h>
+#include <vmm/vmm_ktr.h>
+#include <vmm/io/vatpic.h>
+#include <vmm/io/vioapic.h>
 
 #define VATPIC_LOCK_INIT(v) xpthread_mutex_init(&(v)->lock)
 #define VATPIC_LOCK(v) xpthread_mutex_lock(&(v)->lock)

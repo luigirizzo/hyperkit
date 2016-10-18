@@ -34,12 +34,12 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/errno.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/mptable.h>
-#include <xhyve/acpi.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/mptbl.h>
-#include <xhyve/pci_emul.h>
+#include <support/misc.h>
+#include <support/mptable.h>
+#include <acpi.h>
+#include <xhyve.h>
+#include <mptbl.h>
+#include <pci_emul.h>
 
 #define MPTABLE_BASE		0xF0000
 

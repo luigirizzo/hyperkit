@@ -31,9 +31,9 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/pcireg.h>
-#include <xhyve/support/linker_set.h>
+#include <support/misc.h>
+#include <support/pcireg.h>
+#include <support/linker_set.h>
 
 #define PCI_BARMAX PCIR_MAX_BAR_0 /* BAR registers in a Type 0 header */
 

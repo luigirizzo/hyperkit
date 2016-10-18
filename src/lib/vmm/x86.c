@@ -29,13 +29,13 @@
 
 #include <stdint.h>
 #include <strings.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/atomic.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_host.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/x86.h>
+#include <support/misc.h>
+#include <support/atomic.h>
+#include <support/specialreg.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_host.h>
+#include <vmm/vmm_ktr.h>
+#include <vmm/x86.h>
 
 #define	CPUID_VM_HIGH		0x40000000
 

@@ -33,16 +33,16 @@
 #include <errno.h>
 #include <assert.h>
 
-#include <xhyve/support/linker_set.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/acpi.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/inout.h>
-#include <xhyve/ioapic.h>
-#include <xhyve/mem.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/pci_irq.h>
-#include <xhyve/pci_lpc.h>
+#include <support/linker_set.h>
+#include <vmm/vmm_api.h>
+#include <acpi.h>
+#include <xhyve.h>
+#include <inout.h>
+#include <ioapic.h>
+#include <mem.h>
+#include <pci_emul.h>
+#include <pci_irq.h>
+#include <pci_lpc.h>
 
 #define CONF1_ADDR_PORT 0x0cf8
 #define CONF1_DATA_PORT0 0x0cfc

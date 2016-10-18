@@ -31,14 +31,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/acpi.h>
-#include <xhyve/inout.h>
-#include <xhyve/dbgport.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/pci_irq.h>
-#include <xhyve/pci_lpc.h>
-#include <xhyve/uart_emul.h>
+#include <vmm/vmm_api.h>
+#include <acpi.h>
+#include <inout.h>
+#include <dbgport.h>
+#include <pci_emul.h>
+#include <pci_irq.h>
+#include <pci_lpc.h>
+#include <uart_emul.h>
 
 #define	IO_ICU1		0x20
 #define	IO_ICU2		0xA0

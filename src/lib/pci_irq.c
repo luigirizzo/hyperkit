@@ -32,13 +32,13 @@
 #include <pthread.h>
 #include <errno.h>
 #include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/acpi.h>
-#include <xhyve/inout.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/pci_irq.h>
-#include <xhyve/pci_lpc.h>
+#include <support/misc.h>
+#include <vmm/vmm_api.h>
+#include <acpi.h>
+#include <inout.h>
+#include <pci_emul.h>
+#include <pci_irq.h>
+#include <pci_lpc.h>
 
 /*
  * Implement an 8 pin PCI interrupt router compatible with the router

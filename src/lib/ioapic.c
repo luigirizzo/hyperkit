@@ -26,8 +26,8 @@
  * SUCH DAMAGE.
  */
 
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/ioapic.h>
+#include <vmm/vmm_api.h>
+#include <ioapic.h>
 
 /*
  * Assign PCI INTx interrupts to I/O APIC pins in a round-robin

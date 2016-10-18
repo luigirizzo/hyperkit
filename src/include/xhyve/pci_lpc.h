@@ -29,7 +29,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <xhyve/support/linker_set.h>
+#include <support/linker_set.h>
 
 typedef void (*lpc_write_dsdt_t)(void);
 

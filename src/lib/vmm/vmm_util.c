@@ -28,8 +28,8 @@
  */
 
 #include <stdio.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm_util.h>
+#include <support/misc.h>
+#include <vmm/vmm_util.h>
 
 struct trapframe {
 	register_t	tf_rdi;

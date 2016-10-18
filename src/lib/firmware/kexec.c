@@ -28,8 +28,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/firmware/kexec.h>
+#include <vmm/vmm_api.h>
+#include <firmware/kexec.h>
 
 #ifndef ALIGNUP
 #define ALIGNUP(x, a) (((x - 1) & ~(a - 1)) + a)

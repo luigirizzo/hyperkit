@@ -29,8 +29,8 @@
 
 #include <stdint.h>
 #include <errno.h>
-#include <xhyve/vmm/intel/vmx.h>
-#include <xhyve/vmm/intel/vmcs.h>
+#include <vmm/intel/vmx.h>
+#include <vmm/intel/vmcs.h>
 
 static uint64_t
 vmcs_fix_regval(uint32_t encoding, uint64_t val)

@@ -27,8 +27,8 @@
  * $FreeBSD$
  */
 
-#include <xhyve/support/misc.h>
-#include <xhyve/pci_emul.h>
+#include <support/misc.h>
+#include <pci_emul.h>
 
 static int
 pci_hostbridge_init(struct pci_devinst *pi, UNUSED char *opts)

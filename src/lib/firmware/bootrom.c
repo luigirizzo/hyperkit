@@ -30,10 +30,10 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_mem.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/firmware/bootrom.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_mem.h>
+#include <vmm/vmm_api.h>
+#include <firmware/bootrom.h>
 
 #include <errno.h>
 #include <fcntl.h>

@@ -31,7 +31,7 @@
 #include <stdint.h>
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_vmx.h>
-#include <xhyve/vmm/vmm.h>
+#include <vmm/vmm.h>
 
 int	vmcs_getreg(int vcpuid, int ident, uint64_t *rv);
 int	vmcs_setreg(int vcpuid, int ident, uint64_t val);

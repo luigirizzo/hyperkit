@@ -29,10 +29,10 @@
 
 #include <stdint.h>
 #include <sys/sysctl.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_host.h>
+#include <support/misc.h>
+#include <support/specialreg.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_host.h>
 
 static struct xsave_limits vmm_xsave_limits;
 

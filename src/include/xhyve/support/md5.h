@@ -27,7 +27,7 @@ documentation and/or software.
 
 #pragma once
 
-#include <xhyve/support/misc.h>
+#include <support/misc.h>
 
 #define MD5_BLOCK_LENGTH 64
 #define MD5_DIGEST_LENGTH 16

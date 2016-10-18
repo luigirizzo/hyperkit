@@ -38,10 +38,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/inout.h>
-#include <xhyve/dbgport.h>
-#include <xhyve/pci_lpc.h>
+#include <support/misc.h>
+#include <inout.h>
+#include <dbgport.h>
+#include <pci_lpc.h>
 
 #define	BVM_DBG_PORT 0x224
 #define	BVM_DBG_SIG ('B' << 8 | 'V')

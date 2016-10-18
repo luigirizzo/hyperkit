@@ -31,13 +31,13 @@
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/acpi.h>
-#include <xhyve/inout.h>
-#include <xhyve/mevent.h>
-#include <xhyve/pci_irq.h>
-#include <xhyve/pci_lpc.h>
+#include <support/misc.h>
+#include <vmm/vmm_api.h>
+#include <acpi.h>
+#include <inout.h>
+#include <mevent.h>
+#include <pci_irq.h>
+#include <pci_lpc.h>
 
 static pthread_mutex_t pm_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct mevent *power_button;

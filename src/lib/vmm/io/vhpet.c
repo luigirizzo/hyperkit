@@ -32,14 +32,14 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/acpi_hpet.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_lapic.h>
-#include <xhyve/vmm/vmm_callout.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/io/vhpet.h>
-#include <xhyve/vmm/io/vioapic.h>
+#include <support/misc.h>
+#include <support/acpi_hpet.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_lapic.h>
+#include <vmm/vmm_callout.h>
+#include <vmm/vmm_ktr.h>
+#include <vmm/io/vhpet.h>
+#include <vmm/io/vioapic.h>
 
 #define	HPET_FREQ	10000000		/* 10.0 Mhz */
 #define	FS_PER_S	1000000000000000ul

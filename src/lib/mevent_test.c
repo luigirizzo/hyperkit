@@ -44,7 +44,7 @@
 #include <pthread.h>
 #include <unistd.h>
 
-#include <xhyve/mevent.h>
+#include <mevent.h>
 
 #define TEST_PORT	4321
 

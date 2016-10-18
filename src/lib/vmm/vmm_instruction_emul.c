@@ -32,11 +32,11 @@
 #include <stdbool.h>
 #include <strings.h>
 #include <errno.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/atomic.h>
-#include <xhyve/support/psl.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm_instruction_emul.h>
+#include <support/misc.h>
+#include <support/atomic.h>
+#include <support/psl.h>
+#include <support/specialreg.h>
+#include <vmm/vmm_instruction_emul.h>
 
 #define PG_V 0x001 /* P	Valid */
 #define PG_RW 0x002 /* R/W Read/Write */

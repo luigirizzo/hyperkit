@@ -30,7 +30,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <xhyve/vmm/vmm.h>
+#include <vmm/vmm.h>
 
 struct vm;
 

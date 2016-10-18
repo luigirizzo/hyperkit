@@ -41,8 +41,8 @@
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/time.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/mevent.h>
+#include <support/misc.h>
+#include <mevent.h>
 
 #define	MEVENT_MAX	64
 

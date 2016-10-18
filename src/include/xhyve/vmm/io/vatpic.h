@@ -30,7 +30,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <xhyve/vmm/vmm.h>
+#include <vmm/vmm.h>
 
 #define IO_ICU1 0x020 /* 8259A Interrupt Controller #1 */
 #define IO_ICU2 0x0a0 /* 8259A Interrupt Controller #2 */

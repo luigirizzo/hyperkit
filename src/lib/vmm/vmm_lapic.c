@@ -30,12 +30,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <errno.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/support/apicreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/vmm_lapic.h>
-#include <xhyve/vmm/io/vlapic.h>
+#include <support/specialreg.h>
+#include <support/apicreg.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_ktr.h>
+#include <vmm/vmm_lapic.h>
+#include <vmm/io/vlapic.h>
 
 /*
  * Some MSI message definitions

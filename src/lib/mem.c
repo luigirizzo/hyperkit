@@ -38,10 +38,10 @@
 #include <pthread.h>
 #include <errno.h>
 #include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/tree.h>
-#include <xhyve/vmm/vmm_api.h>
-#include <xhyve/mem.h>
+#include <support/misc.h>
+#include <support/tree.h>
+#include <vmm/vmm_api.h>
+#include <mem.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpadded"

@@ -32,18 +32,18 @@
 #include <strings.h>
 #include <errno.h>
 #include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/atomic.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/support/apicreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_lapic.h>
-#include <xhyve/vmm/vmm_callout.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/vmm_stat.h>
-#include <xhyve/vmm/io/vlapic.h>
-#include <xhyve/vmm/io/vlapic_priv.h>
-#include <xhyve/vmm/io/vioapic.h>
+#include <support/misc.h>
+#include <support/atomic.h>
+#include <support/specialreg.h>
+#include <support/apicreg.h>
+#include <vmm/vmm.h>
+#include <vmm/vmm_lapic.h>
+#include <vmm/vmm_callout.h>
+#include <vmm/vmm_ktr.h>
+#include <vmm/vmm_stat.h>
+#include <vmm/io/vlapic.h>
+#include <vmm/io/vlapic_priv.h>
+#include <vmm/io/vioapic.h>
 
 #define	PRIO(x)			((x) >> 4)
 

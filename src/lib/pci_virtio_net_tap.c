@@ -42,14 +42,14 @@
 #include <sys/uio.h>
 #include <sys/ioctl.h>
 #include <net/ethernet.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/atomic.h>
-#include <xhyve/support/linker_set.h>
-#include <xhyve/support/md5.h>
-#include <xhyve/xhyve.h>
-#include <xhyve/pci_emul.h>
-#include <xhyve/mevent.h>
-#include <xhyve/virtio.h>
+#include <support/misc.h>
+#include <support/atomic.h>
+#include <support/linker_set.h>
+#include <support/md5.h>
+#include <xhyve.h>
+#include <pci_emul.h>
+#include <mevent.h>
+#include <virtio.h>
 
 #define USE_MEVENT 0
 
