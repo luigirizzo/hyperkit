@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,9 +29,8 @@
  * $FreeBSD$
  */
 
-#pragma once
-
-#include <stdint.h>
+#ifndef _VMM_STAT_H_
+#define	_VMM_STAT_H_
 
 struct vm;
 
@@ -48,8 +46,6 @@ struct vmm_stat_type;
 typedef void (*vmm_stat_func_t)(struct vm *vm, int vcpu,
     struct vmm_stat_type *stat);
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct vmm_stat_type {
 	int	index;			/* position in the stats buffer */
 	int	nelems;			/* standalone or array */
@@ -57,16 +53,14 @@ struct vmm_stat_type {
 	vmm_stat_func_t func;
 	enum vmm_stat_scope scope;
 };
-#pragma clang diagnostic pop
 
 void	vmm_stat_register(void *arg);
 
 #define	VMM_STAT_FDEFINE(type, nelems, desc, func, scope)		\
 	struct vmm_stat_type type[1] = {				\
 		{ -1, nelems, desc, func, scope }			\
-	}
-	//};								\
-	// SYSINIT(type##_stat, SI_SUB_KLD, SI_ORDER_ANY, vmm_stat_register, type)
+	};								\
+	SYSINIT(type##_stat, SI_SUB_KLD, SI_ORDER_ANY, vmm_stat_register, type)
 
 #define VMM_STAT_DEFINE(type, nelems, desc, scope) 			\
 	VMM_STAT_FDEFINE(type, nelems, desc, NULL, scope)
@@ -78,6 +72,8 @@ void	vmm_stat_register(void *arg);
 	VMM_STAT_DEFINE(type, 1, desc, VMM_STAT_SCOPE_ANY)
 #define	VMM_STAT_INTEL(type, desc)	\
 	VMM_STAT_DEFINE(type, 1, desc, VMM_STAT_SCOPE_INTEL)
+#define	VMM_STAT_AMD(type, desc)	\
+	VMM_STAT_DEFINE(type, 1, desc, VMM_STAT_SCOPE_AMD)
 
 #define	VMM_STAT_FUNC(type, desc, func)	\
 	VMM_STAT_FDEFINE(type, 1, desc, func, VMM_STAT_SCOPE_ANY)
@@ -93,25 +89,19 @@ void 	vmm_stat_free(void *vp);
  * 'buf' should be at least fit 'MAX_VMM_STAT_TYPES' entries
  */
 int	vmm_stat_copy(struct vm *vm, int vcpu, int *num_stats, uint64_t *buf);
-int	vmm_stat_desc_copy(int index, char *buf, size_t buflen);
+int	vmm_stat_desc_copy(int index, char *buf, int buflen);
 
 static void __inline
 vmm_stat_array_incr(struct vm *vm, int vcpu, struct vmm_stat_type *vst,
 		    int statidx, uint64_t x)
 {
-#ifdef XHYVE_CONFIG_STATS
+#ifdef VMM_KEEP_STATS
 	uint64_t *stats;
-
+	
 	stats = vcpu_stats(vm, vcpu);
 
 	if (vst->index >= 0 && statidx < vst->nelems)
 		stats[vst->index + statidx] += x;
-#else
-	(void) vm;
-	(void) vcpu;
-	(void) vst;
-	(void) statidx;
-	(void) x;
 #endif
 }
 
@@ -119,33 +109,22 @@ static void __inline
 vmm_stat_array_set(struct vm *vm, int vcpu, struct vmm_stat_type *vst,
 		   int statidx, uint64_t val)
 {
-#ifdef XHYVE_CONFIG_STATS
+#ifdef VMM_KEEP_STATS
 	uint64_t *stats;
-
+	
 	stats = vcpu_stats(vm, vcpu);
 
 	if (vst->index >= 0 && statidx < vst->nelems)
 		stats[vst->index + statidx] = val;
-#else
-	(void) vm;
-	(void) vcpu;
-	(void) vst;
-	(void) statidx;
-	(void) val;
 #endif
 }
-
+		   
 static void __inline
 vmm_stat_incr(struct vm *vm, int vcpu, struct vmm_stat_type *vst, uint64_t x)
 {
 
-#ifdef XHYVE_CONFIG_STATS
+#ifdef VMM_KEEP_STATS
 	vmm_stat_array_incr(vm, vcpu, vst, 0, x);
-#else
-	(void) vm;
-	(void) vcpu;
-	(void) vst;
-	(void) x;
 #endif
 }
 
@@ -153,13 +132,8 @@ static void __inline
 vmm_stat_set(struct vm *vm, int vcpu, struct vmm_stat_type *vst, uint64_t val)
 {
 
-#ifdef XHYVE_CONFIG_STATS
+#ifdef VMM_KEEP_STATS
 	vmm_stat_array_set(vm, vcpu, vst, 0, val);
-#else
-	(void) vm;
-	(void) vcpu;
-	(void) vst;
-	(void) val;
 #endif
 }
 
@@ -183,3 +157,5 @@ VMM_STAT_DECLARE(VMEXIT_ASTPENDING);
 VMM_STAT_DECLARE(VMEXIT_USERSPACE);
 VMM_STAT_DECLARE(VMEXIT_RENDEZVOUS);
 VMM_STAT_DECLARE(VMEXIT_EXCEPTION);
+VMM_STAT_DECLARE(VMEXIT_REQIDLE);
+#endif

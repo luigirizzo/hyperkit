@@ -26,15 +26,12 @@
  * $FreeBSD$
  */
 
-#pragma once
-
-#include <stdint.h>
-#include <stdbool.h>
-#include <xhyve/support/misc.h>
+#ifndef _VMM_LAPIC_H_
+#define	_VMM_LAPIC_H_
 
 struct vm;
 
-bool lapic_msr(u_int num);
+boolean_t lapic_msr(u_int num);
 int	lapic_rdmsr(struct vm *vm, int cpu, u_int msr, uint64_t *rval,
 	    bool *retu);
 int	lapic_wrmsr(struct vm *vm, int cpu, u_int msr, uint64_t wval,
@@ -74,3 +71,5 @@ lapic_intr_edge(struct vm *vm, int cpu, int vector)
 int	lapic_set_local_intr(struct vm *vm, int cpu, int vector);
 
 int	lapic_intr_msi(struct vm *vm, uint64_t addr, uint64_t msg);
+
+#endif

@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,42 +26,55 @@
  * $FreeBSD$
  */
 
-#include <stdio.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm_util.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
-struct trapframe {
-	register_t	tf_rdi;
-	register_t	tf_rsi;
-	register_t	tf_rdx;
-	register_t	tf_rcx;
-	register_t	tf_r8;
-	register_t	tf_r9;
-	register_t	tf_rax;
-	register_t	tf_rbx;
-	register_t	tf_rbp;
-	register_t	tf_r10;
-	register_t	tf_r11;
-	register_t	tf_r12;
-	register_t	tf_r13;
-	register_t	tf_r14;
-	register_t	tf_r15;
-	uint32_t	tf_trapno;
-	uint16_t	tf_fs;
-	uint16_t	tf_gs;
-	register_t	tf_addr;
-	uint32_t	tf_flags;
-	uint16_t	tf_es;
-	uint16_t	tf_ds;
-	/* below portion defined in hardware */
-	register_t	tf_err;
-	register_t	tf_rip;
-	register_t	tf_cs;
-	register_t	tf_rflags;
-	register_t	tf_rsp;
-	register_t	tf_ss;
-};
+#include <sys/param.h>
+#include <sys/libkern.h>
 
+#include <machine/md_var.h>
+
+#include "vmm_util.h"
+
+boolean_t
+vmm_is_intel(void)
+{
+
+	if (strcmp(cpu_vendor, "GenuineIntel") == 0)
+		return (TRUE);
+	else
+		return (FALSE);
+}
+
+boolean_t
+vmm_is_amd(void)
+{
+	if (strcmp(cpu_vendor, "AuthenticAMD") == 0)
+		return (TRUE);
+	else
+		return (FALSE);
+}
+
+boolean_t
+vmm_supports_1G_pages(void)
+{
+	unsigned int regs[4];
+
+	/*
+	 * CPUID.80000001:EDX[bit 26] = 1 indicates support for 1GB pages
+	 *
+	 * Both Intel and AMD support this bit.
+	 */
+	if (cpu_exthigh >= 0x80000001) {
+		do_cpuid(0x80000001, regs);
+		if (regs[3] & (1 << 26))
+			return (TRUE);
+	}
+	return (FALSE);
+}
+
+#include <sys/proc.h>
+#include <machine/frame.h>
 #define	DUMP_REG(x)	printf(#x "\t\t0x%016lx\n", (long)(tf->tf_ ## x))
 #define	DUMP_SEG(x)	printf(#x "\t\t0x%04x\n", (unsigned)(tf->tf_ ## x))
 void

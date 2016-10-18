@@ -26,13 +26,11 @@
  * $FreeBSD$
  */
 
-#pragma once
-
-#include <stdint.h>
-#include <stdbool.h>
-#include <xhyve/vmm/vmm.h>
+#ifndef _VLAPIC_H_
+#define	_VLAPIC_H_
 
 struct vm;
+enum x2apic_state;
 
 int vlapic_write(struct vlapic *vlapic, int mmio_access, uint64_t offset,
     uint64_t data, bool *retu);
@@ -108,3 +106,4 @@ void vlapic_icrtmr_write_handler(struct vlapic *vlapic);
 void vlapic_dcr_write_handler(struct vlapic *vlapic);
 void vlapic_lvt_write_handler(struct vlapic *vlapic, uint32_t offset);
 void vlapic_self_ipi_handler(struct vlapic *vlapic, uint64_t val);
+#endif	/* _VLAPIC_H_ */

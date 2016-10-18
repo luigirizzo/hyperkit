@@ -1,7 +1,6 @@
 /*-
  * Copyright (c) 2013 Tycho Nightingale <tycho.nightingale@pluribusnetworks.com>
  * Copyright (c) 2013 Neel Natu <neel@freebsd.org>
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,15 +27,24 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <errno.h>
-#include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/apicreg.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/io/vioapic.h>
-#include <xhyve/vmm/io/vlapic.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
+#include <sys/systm.h>
+#include <sys/kernel.h>
+#include <sys/malloc.h>
+
+#include <x86/apicreg.h>
+#include <machine/vmm.h>
+
+#include "vmm_ktr.h"
+#include "vmm_lapic.h"
+#include "vlapic.h"
+#include "vioapic.h"
 
 #define	IOREGSEL	0x00
 #define	IOWIN		0x10
@@ -44,36 +52,36 @@
 #define	REDIR_ENTRIES	24
 #define	RTBL_RO_BITS	((uint64_t)(IOART_REM_IRR | IOART_DELIVS))
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct vioapic {
-	struct vm *vm;
-	pthread_mutex_t lock;
-	uint32_t id;
-	uint32_t ioregsel;
+	struct vm	*vm;
+	struct mtx	mtx;
+	uint32_t	id;
+	uint32_t	ioregsel;
 	struct {
 		uint64_t reg;
-		int acnt; /* sum of pin asserts (+1) and deasserts (-1) */
+		int	 acnt;	/* sum of pin asserts (+1) and deasserts (-1) */
 	} rtbl[REDIR_ENTRIES];
 };
-#pragma clang diagnostic pop
 
-#define VIOAPIC_LOCK_INIT(v) xpthread_mutex_init(&(v)->lock);
-#define VIOAPIC_LOCK(v) xpthread_mutex_lock(&(v)->lock)
-#define VIOAPIC_UNLOCK(v) xpthread_mutex_unlock(&(v)->lock)
+#define	VIOAPIC_LOCK(vioapic)		mtx_lock_spin(&((vioapic)->mtx))
+#define	VIOAPIC_UNLOCK(vioapic)		mtx_unlock_spin(&((vioapic)->mtx))
+#define	VIOAPIC_LOCKED(vioapic)		mtx_owned(&((vioapic)->mtx))
 
-#define	VIOAPIC_CTR1(vioapic, fmt, a1) \
+static MALLOC_DEFINE(M_VIOAPIC, "vioapic", "bhyve virtual ioapic");
+
+#define	VIOAPIC_CTR1(vioapic, fmt, a1)					\
 	VM_CTR1((vioapic)->vm, fmt, a1)
 
-#define	VIOAPIC_CTR2(vioapic, fmt, a1, a2) \
+#define	VIOAPIC_CTR2(vioapic, fmt, a1, a2)				\
 	VM_CTR2((vioapic)->vm, fmt, a1, a2)
 
-#ifdef XHYVE_CONFIG_TRACE
-#define	VIOAPIC_CTR3(vioapic, fmt, a1, a2, a3) \
+#define	VIOAPIC_CTR3(vioapic, fmt, a1, a2, a3)				\
 	VM_CTR3((vioapic)->vm, fmt, a1, a2, a3)
-#endif
 
-#ifdef XHYVE_CONFIG_TRACE
+#define	VIOAPIC_CTR4(vioapic, fmt, a1, a2, a3, a4)			\
+	VM_CTR4((vioapic)->vm, fmt, a1, a2, a3, a4)
+
+#ifdef KTR
 static const char *
 pinstate_str(bool asserted)
 {
@@ -95,8 +103,11 @@ vioapic_send_intr(struct vioapic *vioapic, int pin)
 	KASSERT(pin >= 0 && pin < REDIR_ENTRIES,
 	    ("vioapic_set_pinstate: invalid pin number %d", pin));
 
-	low = (uint32_t) vioapic->rtbl[pin].reg;
-	high = (uint32_t) (vioapic->rtbl[pin].reg >> 32);
+	KASSERT(VIOAPIC_LOCKED(vioapic),
+	    ("vioapic_set_pinstate: vioapic is not locked"));
+
+	low = vioapic->rtbl[pin].reg;
+	high = vioapic->rtbl[pin].reg >> 32;
 
 	if ((low & IOART_INTMASK) == IOART_INTMSET) {
 		VIOAPIC_CTR1(vioapic, "ioapic pin%d: masked", pin);
@@ -123,6 +134,9 @@ vioapic_set_pinstate(struct vioapic *vioapic, int pin, bool newstate)
 	KASSERT(pin >= 0 && pin < REDIR_ENTRIES,
 	    ("vioapic_set_pinstate: invalid pin number %d", pin));
 
+	KASSERT(VIOAPIC_LOCKED(vioapic),
+	    ("vioapic_set_pinstate: vioapic is not locked"));
+
 	oldcnt = vioapic->rtbl[pin].acnt;
 	if (newstate)
 		vioapic->rtbl[pin].acnt++;
@@ -142,11 +156,10 @@ vioapic_set_pinstate(struct vioapic *vioapic, int pin, bool newstate)
 	} else if (oldcnt == 1 && newcnt == 0) {
 		VIOAPIC_CTR1(vioapic, "ioapic pin%d: deasserted", pin);
 	} else {
-#ifdef XHYVE_CONFIG_TRACE
 		VIOAPIC_CTR3(vioapic, "ioapic pin%d: %s, ignored, acnt %d",
 		    pin, pinstate_str(newstate), newcnt);
-#endif
 	}
+
 	if (needintr)
 		vioapic_send_intr(vioapic, pin);
 }
@@ -179,6 +192,8 @@ vioapic_set_irqstate(struct vm *vm, int irq, enum irqstate irqstate)
 		vioapic_set_pinstate(vioapic, irq, true);
 		vioapic_set_pinstate(vioapic, irq, false);
 		break;
+	default:
+		panic("vioapic_set_irqstate: invalid irqstate %d", irqstate);
 	}
 	VIOAPIC_UNLOCK(vioapic);
 
@@ -211,7 +226,7 @@ vioapic_pulse_irq(struct vm *vm, int irq)
  * configuration.
  */
 static void
-vioapic_update_tmr(struct vm *vm, int vcpuid, UNUSED void *arg)
+vioapic_update_tmr(struct vm *vm, int vcpuid, void *arg)
 {
 	struct vioapic *vioapic;
 	struct vlapic *vlapic;
@@ -228,8 +243,8 @@ vioapic_update_tmr(struct vm *vm, int vcpuid, UNUSED void *arg)
 	 */
 	vlapic_reset_tmr(vlapic);
 	for (pin = 0; pin < REDIR_ENTRIES; pin++) {
-		low = (uint32_t) vioapic->rtbl[pin].reg;
-		high = (uint32_t) (vioapic->rtbl[pin].reg >> 32);
+		low = vioapic->rtbl[pin].reg;
+		high = vioapic->rtbl[pin].reg >> 32;
 
 		level = low & IOART_TRGRLVL ? true : false;
 		if (!level)
@@ -251,7 +266,7 @@ vioapic_update_tmr(struct vm *vm, int vcpuid, UNUSED void *arg)
 }
 
 static uint32_t
-vioapic_read(struct vioapic *vioapic, UNUSED int vcpuid, uint32_t addr)
+vioapic_read(struct vioapic *vioapic, int vcpuid, uint32_t addr)
 {
 	int regnum, pin, rshift;
 
@@ -259,10 +274,13 @@ vioapic_read(struct vioapic *vioapic, UNUSED int vcpuid, uint32_t addr)
 	switch (regnum) {
 	case IOAPIC_ID:
 		return (vioapic->id);
+		break;
 	case IOAPIC_VER:
 		return (((REDIR_ENTRIES - 1) << MAXREDIRSHIFT) | 0x11);
+		break;
 	case IOAPIC_ARB:
 		return (vioapic->id);
+		break;
 	default:
 		break;
 	}
@@ -276,7 +294,7 @@ vioapic_read(struct vioapic *vioapic, UNUSED int vcpuid, uint32_t addr)
 		else
 			rshift = 0;
 
-		return ((uint32_t) (vioapic->rtbl[pin].reg >> rshift));
+		return (vioapic->rtbl[pin].reg >> rshift);
 	}
 
 	return (0);
@@ -319,7 +337,7 @@ vioapic_write(struct vioapic *vioapic, int vcpuid, uint32_t addr, uint32_t data)
 		vioapic->rtbl[pin].reg &= ~mask64 | RTBL_RO_BITS;
 		vioapic->rtbl[pin].reg |= data64 & ~RTBL_RO_BITS;
 
-		VIOAPIC_CTR2(vioapic, "ioapic pin%d: redir table entry %#llx",
+		VIOAPIC_CTR2(vioapic, "ioapic pin%d: redir table entry %#lx",
 		    pin, vioapic->rtbl[pin].reg);
 
 		/*
@@ -328,7 +346,7 @@ vioapic_write(struct vioapic *vioapic, int vcpuid, uint32_t addr, uint32_t data)
 		 * to update their vlapic trigger-mode registers.
 		 */
 		changed = last ^ vioapic->rtbl[pin].reg;
-		if (changed & ~((uint64_t) (IOART_INTMASK | IOART_INTPOL))) {
+		if (changed & ~(IOART_INTMASK | IOART_INTPOL)) {
 			VIOAPIC_CTR1(vioapic, "ioapic pin%d: recalculate "
 			    "vlapic trigger-mode register", pin);
 			VIOAPIC_UNLOCK(vioapic);
@@ -377,14 +395,14 @@ vioapic_mmio_rw(struct vioapic *vioapic, int vcpuid, uint64_t gpa,
 		if (doread)
 			*data = vioapic->ioregsel;
 		else
-			vioapic->ioregsel = (uint32_t) *data;
+			vioapic->ioregsel = *data;
 	} else {
 		if (doread) {
 			*data = vioapic_read(vioapic, vcpuid,
 			    vioapic->ioregsel);
 		} else {
 			vioapic_write(vioapic, vcpuid, vioapic->ioregsel,
-				((uint32_t) *data));
+			    *data);
 		}
 	}
 	VIOAPIC_UNLOCK(vioapic);
@@ -394,20 +412,19 @@ vioapic_mmio_rw(struct vioapic *vioapic, int vcpuid, uint64_t gpa,
 
 int
 vioapic_mmio_read(void *vm, int vcpuid, uint64_t gpa, uint64_t *rval,
-    int size, UNUSED void *arg)
+    int size, void *arg)
 {
 	int error;
 	struct vioapic *vioapic;
 
 	vioapic = vm_ioapic(vm);
 	error = vioapic_mmio_rw(vioapic, vcpuid, gpa, rval, size, true);
-
 	return (error);
 }
 
 int
 vioapic_mmio_write(void *vm, int vcpuid, uint64_t gpa, uint64_t wval,
-    int size, UNUSED void *arg)
+    int size, void *arg)
 {
 	int error;
 	struct vioapic *vioapic;
@@ -418,7 +435,7 @@ vioapic_mmio_write(void *vm, int vcpuid, uint64_t gpa, uint64_t wval,
 }
 
 void
-vioapic_process_eoi(struct vm *vm, UNUSED int vcpuid, int vector)
+vioapic_process_eoi(struct vm *vm, int vcpuid, int vector)
 {
 	struct vioapic *vioapic;
 	int pin;
@@ -439,7 +456,7 @@ vioapic_process_eoi(struct vm *vm, UNUSED int vcpuid, int vector)
 			continue;
 		if ((vioapic->rtbl[pin].reg & IOART_INTVEC) != vector)
 			continue;
-		vioapic->rtbl[pin].reg &= ~((uint64_t) IOART_REM_IRR);
+		vioapic->rtbl[pin].reg &= ~IOART_REM_IRR;
 		if (vioapic->rtbl[pin].acnt > 0) {
 			VIOAPIC_CTR2(vioapic, "ioapic pin%d: asserted at eoi, "
 			    "acnt %d", pin, vioapic->rtbl[pin].acnt);
@@ -455,12 +472,10 @@ vioapic_init(struct vm *vm)
 	int i;
 	struct vioapic *vioapic;
 
-	vioapic = malloc(sizeof(struct vioapic));
-	assert(vioapic);
-	bzero(vioapic, sizeof(struct vioapic));
-	vioapic->vm = vm;
+	vioapic = malloc(sizeof(struct vioapic), M_VIOAPIC, M_WAITOK | M_ZERO);
 
-	VIOAPIC_LOCK_INIT(vioapic);
+	vioapic->vm = vm;
+	mtx_init(&vioapic->mtx, "vioapic lock", NULL, MTX_SPIN);
 
 	/* Initialize all redirection entries to mask all interrupts */
 	for (i = 0; i < REDIR_ENTRIES; i++)
@@ -472,11 +487,13 @@ vioapic_init(struct vm *vm)
 void
 vioapic_cleanup(struct vioapic *vioapic)
 {
-	free(vioapic);
+
+	free(vioapic, M_VIOAPIC);
 }
 
 int
-vioapic_pincount(UNUSED struct vm *vm)
+vioapic_pincount(struct vm *vm)
 {
+
 	return (REDIR_ENTRIES);
 }

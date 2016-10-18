@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,10 +26,29 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
-#include <errno.h>
-#include <xhyve/vmm/intel/vmx.h>
-#include <xhyve/vmm/intel/vmcs.h>
+#include "opt_ddb.h"
+
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/pcpu.h>
+
+#include <vm/vm.h>
+#include <vm/pmap.h>
+
+#include <machine/segments.h>
+#include <machine/vmm.h>
+#include "vmm_host.h"
+#include "vmx_cpufunc.h"
+#include "vmcs.h"
+#include "ept.h"
+#include "vmx.h"
+
+#ifdef DDB
+#include <ddb/ddb.h>
+#endif
 
 static uint64_t
 vmcs_fix_regval(uint32_t encoding, uint64_t val)
@@ -94,7 +112,7 @@ vmcs_field_encoding(int ident)
 	case VM_REG_GUEST_PDPTE3:
 		return (VMCS_GUEST_PDPTE3);
 	default:
-		return ((uint32_t) -1);
+		return (-1);
 	}
 
 }
@@ -162,8 +180,9 @@ vmcs_seg_desc_encoding(int seg, uint32_t *base, uint32_t *lim, uint32_t *acc)
 }
 
 int
-vmcs_getreg(int vcpuid, int ident, uint64_t *retval)
+vmcs_getreg(struct vmcs *vmcs, int running, int ident, uint64_t *retval)
 {
+	int error;
 	uint32_t encoding;
 
 	/*
@@ -181,14 +200,21 @@ vmcs_getreg(int vcpuid, int ident, uint64_t *retval)
 	if (encoding == (uint32_t)-1)
 		return (EINVAL);
 
-	*retval = vmcs_read(vcpuid, encoding);
+	if (!running)
+		VMPTRLD(vmcs);
 
-	return (0);
+	error = vmread(encoding, retval);
+
+	if (!running)
+		VMCLEAR(vmcs);
+
+	return (error);
 }
 
 int
-vmcs_setreg(int vcpuid, int ident, uint64_t val)
+vmcs_setreg(struct vmcs *vmcs, int running, int ident, uint64_t val)
 {
+	int error;
 	uint32_t encoding;
 
 	if (ident < 0)
@@ -201,45 +227,277 @@ vmcs_setreg(int vcpuid, int ident, uint64_t val)
 
 	val = vmcs_fix_regval(encoding, val);
 
-	vmcs_write(vcpuid, encoding, val);
+	if (!running)
+		VMPTRLD(vmcs);
 
-	return (0);
+	error = vmwrite(encoding, val);
+
+	if (!running)
+		VMCLEAR(vmcs);
+
+	return (error);
 }
 
 int
-vmcs_setdesc(int vcpuid, int seg, struct seg_desc *desc)
+vmcs_setdesc(struct vmcs *vmcs, int running, int seg, struct seg_desc *desc)
 {
 	int error;
 	uint32_t base, limit, access;
 
 	error = vmcs_seg_desc_encoding(seg, &base, &limit, &access);
 	if (error != 0)
-		xhyve_abort("vmcs_setdesc: invalid segment register %d\n", seg);
+		panic("vmcs_setdesc: invalid segment register %d", seg);
 
-	vmcs_write(vcpuid, base, desc->base);
-	vmcs_write(vcpuid, limit, desc->limit);
+	if (!running)
+		VMPTRLD(vmcs);
+	if ((error = vmwrite(base, desc->base)) != 0)
+		goto done;
+
+	if ((error = vmwrite(limit, desc->limit)) != 0)
+		goto done;
+
 	if (access != VMCS_INVALID_ENCODING) {
-		vmcs_write(vcpuid, access, desc->access);
+		if ((error = vmwrite(access, desc->access)) != 0)
+			goto done;
 	}
-
-	return (0);
+done:
+	if (!running)
+		VMCLEAR(vmcs);
+	return (error);
 }
 
 int
-vmcs_getdesc(int vcpuid, int seg, struct seg_desc *desc)
+vmcs_getdesc(struct vmcs *vmcs, int running, int seg, struct seg_desc *desc)
 {
 	int error;
 	uint32_t base, limit, access;
+	uint64_t u64;
 
 	error = vmcs_seg_desc_encoding(seg, &base, &limit, &access);
 	if (error != 0)
-		xhyve_abort("vmcs_setdesc: invalid segment register %d\n", seg);
+		panic("vmcs_getdesc: invalid segment register %d", seg);
 
-	desc->base = vmcs_read(vcpuid, base);
-	desc->limit = (uint32_t) vmcs_read(vcpuid, limit);
+	if (!running)
+		VMPTRLD(vmcs);
+	if ((error = vmread(base, &u64)) != 0)
+		goto done;
+	desc->base = u64;
+
+	if ((error = vmread(limit, &u64)) != 0)
+		goto done;
+	desc->limit = u64;
+
 	if (access != VMCS_INVALID_ENCODING) {
-		desc->access = (uint32_t) vmcs_read(vcpuid, access);
+		if ((error = vmread(access, &u64)) != 0)
+			goto done;
+		desc->access = u64;
+	}
+done:
+	if (!running)
+		VMCLEAR(vmcs);
+	return (error);
+}
+
+int
+vmcs_set_msr_save(struct vmcs *vmcs, u_long g_area, u_int g_count)
+{
+	int error;
+
+	VMPTRLD(vmcs);
+
+	/*
+	 * Guest MSRs are saved in the VM-exit MSR-store area.
+	 * Guest MSRs are loaded from the VM-entry MSR-load area.
+	 * Both areas point to the same location in memory.
+	 */
+	if ((error = vmwrite(VMCS_EXIT_MSR_STORE, g_area)) != 0)
+		goto done;
+	if ((error = vmwrite(VMCS_EXIT_MSR_STORE_COUNT, g_count)) != 0)
+		goto done;
+
+	if ((error = vmwrite(VMCS_ENTRY_MSR_LOAD, g_area)) != 0)
+		goto done;
+	if ((error = vmwrite(VMCS_ENTRY_MSR_LOAD_COUNT, g_count)) != 0)
+		goto done;
+
+	error = 0;
+done:
+	VMCLEAR(vmcs);
+	return (error);
+}
+
+int
+vmcs_init(struct vmcs *vmcs)
+{
+	int error, codesel, datasel, tsssel;
+	u_long cr0, cr4, efer;
+	uint64_t pat, fsbase, idtrbase;
+
+	codesel = vmm_get_host_codesel();
+	datasel = vmm_get_host_datasel();
+	tsssel = vmm_get_host_tsssel();
+
+	/*
+	 * Make sure we have a "current" VMCS to work with.
+	 */
+	VMPTRLD(vmcs);
+
+	/* Host state */
+
+	/* Initialize host IA32_PAT MSR */
+	pat = vmm_get_host_pat();
+	if ((error = vmwrite(VMCS_HOST_IA32_PAT, pat)) != 0)
+		goto done;
+
+	/* Load the IA32_EFER MSR */
+	efer = vmm_get_host_efer();
+	if ((error = vmwrite(VMCS_HOST_IA32_EFER, efer)) != 0)
+		goto done;
+
+	/* Load the control registers */
+
+	cr0 = vmm_get_host_cr0();
+	if ((error = vmwrite(VMCS_HOST_CR0, cr0)) != 0)
+		goto done;
+	
+	cr4 = vmm_get_host_cr4() | CR4_VMXE;
+	if ((error = vmwrite(VMCS_HOST_CR4, cr4)) != 0)
+		goto done;
+
+	/* Load the segment selectors */
+	if ((error = vmwrite(VMCS_HOST_ES_SELECTOR, datasel)) != 0)
+		goto done;
+
+	if ((error = vmwrite(VMCS_HOST_CS_SELECTOR, codesel)) != 0)
+		goto done;
+
+	if ((error = vmwrite(VMCS_HOST_SS_SELECTOR, datasel)) != 0)
+		goto done;
+
+	if ((error = vmwrite(VMCS_HOST_DS_SELECTOR, datasel)) != 0)
+		goto done;
+
+	if ((error = vmwrite(VMCS_HOST_FS_SELECTOR, datasel)) != 0)
+		goto done;
+
+	if ((error = vmwrite(VMCS_HOST_GS_SELECTOR, datasel)) != 0)
+		goto done;
+
+	if ((error = vmwrite(VMCS_HOST_TR_SELECTOR, tsssel)) != 0)
+		goto done;
+
+	/*
+	 * Load the Base-Address for %fs and idtr.
+	 *
+	 * Note that we exclude %gs, tss and gdtr here because their base
+	 * address is pcpu specific.
+	 */
+	fsbase = vmm_get_host_fsbase();
+	if ((error = vmwrite(VMCS_HOST_FS_BASE, fsbase)) != 0)
+		goto done;
+
+	idtrbase = vmm_get_host_idtrbase();
+	if ((error = vmwrite(VMCS_HOST_IDTR_BASE, idtrbase)) != 0)
+		goto done;
+
+	/* instruction pointer */
+	if ((error = vmwrite(VMCS_HOST_RIP, (u_long)vmx_exit_guest)) != 0)
+		goto done;
+
+	/* link pointer */
+	if ((error = vmwrite(VMCS_LINK_POINTER, ~0)) != 0)
+		goto done;
+done:
+	VMCLEAR(vmcs);
+	return (error);
+}
+
+#ifdef DDB
+extern int vmxon_enabled[];
+
+DB_SHOW_COMMAND(vmcs, db_show_vmcs)
+{
+	uint64_t cur_vmcs, val;
+	uint32_t exit;
+
+	if (!vmxon_enabled[curcpu]) {
+		db_printf("VMX not enabled\n");
+		return;
 	}
 
-	return (0);
+	if (have_addr) {
+		db_printf("Only current VMCS supported\n");
+		return;
+	}
+
+	vmptrst(&cur_vmcs);
+	if (cur_vmcs == VMCS_INITIAL) {
+		db_printf("No current VM context\n");
+		return;
+	}
+	db_printf("VMCS: %jx\n", cur_vmcs);
+	db_printf("VPID: %lu\n", vmcs_read(VMCS_VPID));
+	db_printf("Activity: ");
+	val = vmcs_read(VMCS_GUEST_ACTIVITY);
+	switch (val) {
+	case 0:
+		db_printf("Active");
+		break;
+	case 1:
+		db_printf("HLT");
+		break;
+	case 2:
+		db_printf("Shutdown");
+		break;
+	case 3:
+		db_printf("Wait for SIPI");
+		break;
+	default:
+		db_printf("Unknown: %#lx", val);
+	}
+	db_printf("\n");
+	exit = vmcs_read(VMCS_EXIT_REASON);
+	if (exit & 0x80000000)
+		db_printf("Entry Failure Reason: %u\n", exit & 0xffff);
+	else
+		db_printf("Exit Reason: %u\n", exit & 0xffff);
+	db_printf("Qualification: %#lx\n", vmcs_exit_qualification());
+	db_printf("Guest Linear Address: %#lx\n",
+	    vmcs_read(VMCS_GUEST_LINEAR_ADDRESS));
+	switch (exit & 0x8000ffff) {
+	case EXIT_REASON_EXCEPTION:
+	case EXIT_REASON_EXT_INTR:
+		val = vmcs_read(VMCS_EXIT_INTR_INFO);
+		db_printf("Interrupt Type: ");
+		switch (val >> 8 & 0x7) {
+		case 0:
+			db_printf("external");
+			break;
+		case 2:
+			db_printf("NMI");
+			break;
+		case 3:
+			db_printf("HW exception");
+			break;
+		case 4:
+			db_printf("SW exception");
+			break;
+		default:
+			db_printf("?? %lu", val >> 8 & 0x7);
+			break;
+		}
+		db_printf("  Vector: %lu", val & 0xff);
+		if (val & 0x800)
+			db_printf("  Error Code: %lx",
+			    vmcs_read(VMCS_EXIT_INTR_ERRCODE));
+		db_printf("\n");
+		break;
+	case EXIT_REASON_EPT_FAULT:
+	case EXIT_REASON_EPT_MISCONFIG:
+		db_printf("Guest Physical Address: %#lx\n",
+		    vmcs_read(VMCS_GUEST_PHYSICAL_ADDRESS));
+		break;
+	}
+	db_printf("VM-instruction error: %#lx\n", vmcs_instruction_error());
 }
+#endif

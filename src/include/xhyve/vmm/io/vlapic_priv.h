@@ -26,12 +26,10 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _VLAPIC_PRIV_H_
+#define	_VLAPIC_PRIV_H_
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <xhyve/support/apicreg.h>
-#include <xhyve/vmm/vmm_callout.h>
+#include <x86/apicreg.h>
 
 /*
  * APIC Register:		Offset	   Description
@@ -97,32 +95,32 @@
 #define	VLAPIC_CTR3(vlapic, format, p1, p2, p3)				\
 	VCPU_CTR3((vlapic)->vm, (vlapic)->vcpuid, format, p1, p2, p3)
 
-#define	VLAPIC_CTR_IRR(vlapic, msg) \
-do { \
-	uint32_t *x = &(vlapic)->apic_page->irr0; \
-	x[0] = x[0]; /* silence compiler */ \
-	VLAPIC_CTR1((vlapic), msg " irr0 0x%08x", x[0 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " irr1 0x%08x", x[1 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " irr2 0x%08x", x[2 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " irr3 0x%08x", x[3 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " irr4 0x%08x", x[4 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " irr5 0x%08x", x[5 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " irr6 0x%08x", x[6 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " irr7 0x%08x", x[7 << 2]); \
+#define	VLAPIC_CTR_IRR(vlapic, msg)					\
+do {									\
+	uint32_t *irrptr = &(vlapic)->apic_page->irr0;			\
+	irrptr[0] = irrptr[0];	/* silence compiler */			\
+	VLAPIC_CTR1((vlapic), msg " irr0 0x%08x", irrptr[0 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr1 0x%08x", irrptr[1 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr2 0x%08x", irrptr[2 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr3 0x%08x", irrptr[3 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr4 0x%08x", irrptr[4 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr5 0x%08x", irrptr[5 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr6 0x%08x", irrptr[6 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " irr7 0x%08x", irrptr[7 << 2]);	\
 } while (0)
 
-#define	VLAPIC_CTR_ISR(vlapic, msg) \
-do { \
-	uint32_t *x = &(vlapic)->apic_page->isr0; \
-	x[0] = x[0]; /* silence compiler */ \
-	VLAPIC_CTR1((vlapic), msg " isr0 0x%08x", x[0 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " isr1 0x%08x", x[1 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " isr2 0x%08x", x[2 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " isr3 0x%08x", x[3 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " isr4 0x%08x", x[4 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " isr5 0x%08x", x[5 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " isr6 0x%08x", x[6 << 2]); \
-	VLAPIC_CTR1((vlapic), msg " isr7 0x%08x", x[7 << 2]); \
+#define	VLAPIC_CTR_ISR(vlapic, msg)					\
+do {									\
+	uint32_t *isrptr = &(vlapic)->apic_page->isr0;			\
+	isrptr[0] = isrptr[0];	/* silence compiler */			\
+	VLAPIC_CTR1((vlapic), msg " isr0 0x%08x", isrptr[0 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr1 0x%08x", isrptr[1 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr2 0x%08x", isrptr[2 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr3 0x%08x", isrptr[3 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr4 0x%08x", isrptr[4 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr5 0x%08x", isrptr[5 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr6 0x%08x", isrptr[6 << 2]);	\
+	VLAPIC_CTR1((vlapic), msg " isr7 0x%08x", isrptr[7 << 2]);	\
 } while (0)
 
 enum boot_state {
@@ -149,20 +147,20 @@ struct vlapic_ops {
 	void (*enable_x2apic_mode)(struct vlapic *vlapic);
 };
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct vlapic {
-	struct vm *vm;
-	int vcpuid;
-	struct LAPIC *apic_page;
-	struct vlapic_ops ops;
-	uint32_t esr_pending;
-	int esr_firing;
-	struct callout callout; /* vlapic timer */
-	struct bintime timer_fire_bt; /* callout expiry time */
-	struct bintime timer_freq_bt; /* timer frequency */
-	struct bintime timer_period_bt; /* timer period */
-	pthread_mutex_t timer_lock;
+	struct vm		*vm;
+	int			vcpuid;
+	struct LAPIC		*apic_page;
+	struct vlapic_ops	ops;
+
+	uint32_t		esr_pending;
+	int			esr_firing;
+
+	struct callout	callout;	/* vlapic timer */
+	struct bintime	timer_fire_bt;	/* callout expiry time */
+	struct bintime	timer_freq_bt;	/* timer frequency */
+	struct bintime	timer_period_bt; /* timer period */
+	struct mtx	timer_mtx;
 
 	/*
 	 * The 'isrvec_stk' is a stack of vectors injected by the local apic.
@@ -170,20 +168,23 @@ struct vlapic {
 	 * The vector on the top of the stack is used to compute the
 	 * Processor Priority in conjunction with the TPR.
 	 */
-	uint8_t isrvec_stk[ISRVEC_STK_SIZE];
-	int isrvec_stk_top;
-	uint64_t msr_apicbase;
+	uint8_t		isrvec_stk[ISRVEC_STK_SIZE];
+	int		isrvec_stk_top;
+
+	uint64_t	msr_apicbase;
 	enum boot_state	boot_state;
+
 	/*
 	 * Copies of some registers in the virtual APIC page. We do this for
 	 * a couple of different reasons:
 	 * - to be able to detect what changed (e.g. svr_last)
 	 * - to maintain a coherent snapshot of the register (e.g. lvt_last)
 	 */
-	uint32_t svr_last;
-	uint32_t lvt_last[VLAPIC_MAXLVT_INDEX + 1];
+	uint32_t	svr_last;
+	uint32_t	lvt_last[VLAPIC_MAXLVT_INDEX + 1];
 };
-#pragma clang diagnostic pop
 
 void vlapic_init(struct vlapic *vlapic);
 void vlapic_cleanup(struct vlapic *vlapic);
+
+#endif	/* _VLAPIC_PRIV_H_ */

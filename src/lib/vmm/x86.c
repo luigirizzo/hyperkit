@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,28 +26,52 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
-#include <strings.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/atomic.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_host.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/x86.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <sys/pcpu.h>
+#include <sys/systm.h>
+#include <sys/sysctl.h>
+
+#include <machine/clock.h>
+#include <machine/cpufunc.h>
+#include <machine/md_var.h>
+#include <machine/segments.h>
+#include <machine/specialreg.h>
+
+#include <machine/vmm.h>
+
+#include "vmm_host.h"
+#include "vmm_ktr.h"
+#include "vmm_util.h"
+#include "x86.h"
+
+SYSCTL_DECL(_hw_vmm);
+static SYSCTL_NODE(_hw_vmm, OID_AUTO, topology, CTLFLAG_RD, 0, NULL);
 
 #define	CPUID_VM_HIGH		0x40000000
 
 static const char bhyve_id[12] = "bhyve bhyve ";
 
-static volatile u_long bhyve_xcpuids;
+static uint64_t bhyve_xcpuids;
+SYSCTL_ULONG(_hw_vmm, OID_AUTO, bhyve_xcpuids, CTLFLAG_RW, &bhyve_xcpuids, 0,
+    "Number of times an unknown cpuid leaf was accessed");
 
 /*
  * The default CPU topology is a single thread per package.
  */
 static u_int threads_per_core = 1;
+SYSCTL_UINT(_hw_vmm_topology, OID_AUTO, threads_per_core, CTLFLAG_RDTUN,
+    &threads_per_core, 0, NULL);
+
 static u_int cores_per_package = 1;
+SYSCTL_UINT(_hw_vmm_topology, OID_AUTO, cores_per_package, CTLFLAG_RDTUN,
+    &cores_per_package, 0, NULL);
+
 static int cpuid_leaf_b = 1;
+SYSCTL_INT(_hw_vmm_topology, OID_AUTO, cpuid_leaf_b, CTLFLAG_RDTUN,
+    &cpuid_leaf_b, 0, NULL);
 
 /*
  * Round up to the next power of two, if necessary, and then take log2.
@@ -58,7 +81,7 @@ static __inline int
 log2(u_int x)
 {
 
-	return (fls((int) (x << (1 - powerof2(x)))) - 1);
+	return (fls(x << (1 - powerof2(x))) - 1);
 }
 
 int
@@ -67,25 +90,11 @@ x86_emulate_cpuid(struct vm *vm, int vcpu_id,
 {
 	const struct xsave_limits *limits;
 	uint64_t cr4;
-	int error, level, width, x2apic_id;
+	int error, enable_invpcid, level, width, x2apic_id;
 	unsigned int func, regs[4], logical_cpus;
-	u_int cpu_feature, amd_feature, amd_feature2, cpu_high, cpu_exthigh;
-	u_int tsc_is_invariant, smp_tsc;
 	enum x2apic_state x2apic_state;
 
 	VCPU_CTR2(vm, vcpu_id, "cpuid %#x,%#x", *eax, *ecx);
-
-	tsc_is_invariant = 1;
-	smp_tsc = 1;
-	do_cpuid(0, regs);
-	cpu_high = regs[0];
-	do_cpuid(1, regs);
-	cpu_feature = regs[3];
-	do_cpuid(0x80000000, regs);
-	cpu_exthigh = regs[0];
-	do_cpuid(0x80000001, regs);
-	amd_feature = regs[3] & ~(cpu_feature & 0x0183f3ff);
-	amd_feature2 = regs[2];
 
 	/*
 	 * Requests for invalid CPUID levels should map to the highest
@@ -124,39 +133,54 @@ x86_emulate_cpuid(struct vm *vm, int vcpu_id,
 			break;
 		case CPUID_8000_0008:
 			cpuid_count(*eax, *ecx, regs);
+			if (vmm_is_amd()) {
+				/*
+				 * XXX this might appear silly because AMD
+				 * cpus don't have threads.
+				 *
+				 * However this matches the logical cpus as
+				 * advertised by leaf 0x1 and will work even
+				 * if the 'threads_per_core' tunable is set
+				 * incorrectly on an AMD host.
+				 */
+				logical_cpus = threads_per_core *
+				    cores_per_package;
+				regs[2] = logical_cpus - 1;
+			}
 			break;
+
 		case CPUID_8000_0001:
 			cpuid_count(*eax, *ecx, regs);
 
 			/*
 			 * Hide SVM and Topology Extension features from guest.
 			 */
-			regs[2] &= ~((unsigned) (AMDID2_SVM | AMDID2_TOPOLOGY));
+			regs[2] &= ~(AMDID2_SVM | AMDID2_TOPOLOGY);
 
 			/*
 			 * Don't advertise extended performance counter MSRs
 			 * to the guest.
 			 */
-			regs[2] &= ~((unsigned) AMDID2_PCXC);
-			regs[2] &= ~((unsigned) AMDID2_PNXC);
-			regs[2] &= ~((unsigned) AMDID2_PTSCEL2I);
+			regs[2] &= ~AMDID2_PCXC;
+			regs[2] &= ~AMDID2_PNXC;
+			regs[2] &= ~AMDID2_PTSCEL2I;
 
 			/*
 			 * Don't advertise Instruction Based Sampling feature.
 			 */
-			regs[2] &= ~((unsigned) AMDID2_IBS);
+			regs[2] &= ~AMDID2_IBS;
 
 			/* NodeID MSR not available */
-			regs[2] &= ~((unsigned) AMDID2_NODE_ID);
+			regs[2] &= ~AMDID2_NODE_ID;
 
 			/* Don't advertise the OS visible workaround feature */
-			regs[2] &= ~((unsigned) AMDID2_OSVW);
+			regs[2] &= ~AMDID2_OSVW;
 
 			/*
 			 * Hide rdtscp/ia32_tsc_aux until we know how
 			 * to deal with them.
 			 */
-			regs[3] &= ~((unsigned) AMDID_RDTSCP);
+			regs[3] &= ~AMDID_RDTSCP;
 			break;
 
 		case CPUID_8000_0007:
@@ -195,77 +219,78 @@ x86_emulate_cpuid(struct vm *vm, int vcpu_id,
 
 			error = vm_get_x2apic_state(vm, vcpu_id, &x2apic_state);
 			if (error) {
-				xhyve_abort("x86_emulate_cpuid: error %d "
-					"fetching x2apic state\n", error);
+				panic("x86_emulate_cpuid: error %d "
+				      "fetching x2apic state", error);
 			}
 
 			/*
 			 * Override the APIC ID only in ebx
 			 */
-			regs[1] &= ~((unsigned) CPUID_LOCAL_APIC_ID);
-			regs[1] |= (((unsigned) vcpu_id) << CPUID_0000_0001_APICID_SHIFT);
+			regs[1] &= ~(CPUID_LOCAL_APIC_ID);
+			regs[1] |= (vcpu_id << CPUID_0000_0001_APICID_SHIFT);
 
 			/*
 			 * Don't expose VMX, SpeedStep, TME or SMX capability.
 			 * Advertise x2APIC capability and Hypervisor guest.
 			 */
-			regs[2] &= ~((unsigned) (CPUID2_VMX | CPUID2_EST | CPUID2_TM2));
-			regs[2] &= ~((unsigned) CPUID2_SMX);
+			regs[2] &= ~(CPUID2_VMX | CPUID2_EST | CPUID2_TM2);
+			regs[2] &= ~(CPUID2_SMX);
 
-			regs[2] |= (unsigned) CPUID2_HV;
+			regs[2] |= CPUID2_HV;
 
-			if (x2apic_state != ((unsigned) X2APIC_DISABLED))
-				regs[2] |= ((unsigned) CPUID2_X2APIC);
+			if (x2apic_state != X2APIC_DISABLED)
+				regs[2] |= CPUID2_X2APIC;
 			else
-				regs[2] &= ~((unsigned) CPUID2_X2APIC);
+				regs[2] &= ~CPUID2_X2APIC;
 
 			/*
 			 * Only advertise CPUID2_XSAVE in the guest if
 			 * the host is using XSAVE.
 			 */
-			if (!(regs[2] & ((unsigned) CPUID2_OSXSAVE)))
-				regs[2] &= ~((unsigned) CPUID2_XSAVE);
+			if (!(regs[2] & CPUID2_OSXSAVE))
+				regs[2] &= ~CPUID2_XSAVE;
 
 			/*
 			 * If CPUID2_XSAVE is being advertised and the
 			 * guest has set CR4_XSAVE, set
 			 * CPUID2_OSXSAVE.
 			 */
-			regs[2] &= ~((unsigned) CPUID2_OSXSAVE);
-			if (regs[2] & ((unsigned) CPUID2_XSAVE)) {
-				error = vm_get_register(vm, vcpu_id, VM_REG_GUEST_CR4, &cr4);
+			regs[2] &= ~CPUID2_OSXSAVE;
+			if (regs[2] & CPUID2_XSAVE) {
+				error = vm_get_register(vm, vcpu_id,
+				    VM_REG_GUEST_CR4, &cr4);
 				if (error)
-					xhyve_abort("x86_emulate_cpuid: error %d "
-					      "fetching %%cr4\n", error);
+					panic("x86_emulate_cpuid: error %d "
+					      "fetching %%cr4", error);
 				if (cr4 & CR4_XSAVE)
-					regs[2] |= ((unsigned) CPUID2_OSXSAVE);
+					regs[2] |= CPUID2_OSXSAVE;
 			}
 
 			/*
 			 * Hide monitor/mwait until we know how to deal with
 			 * these instructions.
 			 */
-			regs[2] &= ~((unsigned) CPUID2_MON);
+			regs[2] &= ~CPUID2_MON;
 
                         /*
 			 * Hide the performance and debug features.
 			 */
-			regs[2] &= ~((unsigned) CPUID2_PDCM);
+			regs[2] &= ~CPUID2_PDCM;
 
 			/*
 			 * No TSC deadline support in the APIC yet
 			 */
-			regs[2] &= ~((unsigned) CPUID2_TSCDLT);
+			regs[2] &= ~CPUID2_TSCDLT;
 
 			/*
 			 * Hide thermal monitoring
 			 */
-			regs[3] &= ~((unsigned) (CPUID_ACPI | CPUID_TM));
+			regs[3] &= ~(CPUID_ACPI | CPUID_TM);
 
 			/*
 			 * Hide the debug store capability.
 			 */
-			regs[3] &= ~((unsigned) CPUID_DS);
+			regs[3] &= ~CPUID_DS;
 
 			/*
 			 * Advertise the Machine Check and MTRR capability.
@@ -273,12 +298,12 @@ x86_emulate_cpuid(struct vm *vm, int vcpu_id,
 			 * Some guest OSes (e.g. Windows) will not boot if
 			 * these features are absent.
 			 */
-			regs[3] |= (unsigned) (CPUID_MCA | CPUID_MCE | CPUID_MTRR);
+			regs[3] |= (CPUID_MCA | CPUID_MCE | CPUID_MTRR);
 
 			logical_cpus = threads_per_core * cores_per_package;
-			regs[1] &= ~((unsigned) CPUID_HTT_CORES);
+			regs[1] &= ~CPUID_HTT_CORES;
 			regs[1] |= (logical_cpus & 0xff) << 16;
-			regs[3] |= (unsigned) CPUID_HTT;
+			regs[3] |= CPUID_HTT;
 			break;
 
 		case CPUID_0000_0004:
@@ -328,8 +353,12 @@ x86_emulate_cpuid(struct vm *vm, int vcpu_id,
 				    CPUID_STDEXT_AVX512CD);
 				regs[2] = 0;
 				regs[3] = 0;
-				/* FIXME */
-				// regs[1] |= CPUID_STDEXT_INVPCID;
+
+				/* Advertise INVPCID if it is enabled. */
+				error = vm_get_capability(vm, vcpu_id,
+				    VM_CAP_ENABLE_INVPCID, &enable_invpcid);
+				if (error == 0 && enable_invpcid)
+					regs[1] |= CPUID_STDEXT_INVPCID;
 			}
 			break;
 
@@ -355,11 +384,6 @@ x86_emulate_cpuid(struct vm *vm, int vcpu_id,
 			/*
 			 * Processor topology enumeration
 			 */
-			logical_cpus = 0;
-			width = 0;
-			level = 0;
-			x2apic_id = 0;
-
 			if (*ecx == 0) {
 				logical_cpus = threads_per_core;
 				width = log2(logical_cpus);
@@ -384,8 +408,8 @@ x86_emulate_cpuid(struct vm *vm, int vcpu_id,
 
 			regs[0] = width & 0x1f;
 			regs[1] = logical_cpus & 0xffff;
-			regs[2] = (((unsigned) level) << 8) | (*ecx & 0xff);
-			regs[3] = (unsigned) x2apic_id;
+			regs[2] = (level << 8) | (*ecx & 0xff);
+			regs[3] = x2apic_id;
 			break;
 
 		case CPUID_0000_000D:
@@ -463,4 +487,35 @@ x86_emulate_cpuid(struct vm *vm, int vcpu_id,
 	*edx = regs[3];
 
 	return (1);
+}
+
+bool
+vm_cpuid_capability(struct vm *vm, int vcpuid, enum vm_cpuid_capability cap)
+{
+	bool rv;
+
+	KASSERT(cap > 0 && cap < VCC_LAST, ("%s: invalid vm_cpu_capability %d",
+	    __func__, cap));
+
+	/*
+	 * Simply passthrough the capabilities of the host cpu for now.
+	 */
+	rv = false;
+	switch (cap) {
+	case VCC_NO_EXECUTE:
+		if (amd_feature & AMDID_NX)
+			rv = true;
+		break;
+	case VCC_FFXSR:
+		if (amd_feature & AMDID_FFXSR)
+			rv = true;
+		break;
+	case VCC_TCE:
+		if (amd_feature2 & AMDID2_TCE)
+			rv = true;
+		break;
+	default:
+		panic("%s: unknown vm_cpu_capability %d", __func__, cap);
+	}
+	return (rv);
 }

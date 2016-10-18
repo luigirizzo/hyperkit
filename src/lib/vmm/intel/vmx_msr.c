@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,86 +26,114 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <errno.h>
-#include <sys/sysctl.h>
-#include <Hypervisor/hv.h>
-#include <Hypervisor/hv_vmx.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/intel/vmx.h>
-#include <xhyve/vmm/intel/vmx_msr.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
-static bool
+#include <sys/param.h>
+#include <sys/systm.h>
+
+#include <machine/clock.h>
+#include <machine/cpufunc.h>
+#include <machine/md_var.h>
+#include <machine/specialreg.h>
+#include <machine/vmm.h>
+
+#include "vmx.h"
+#include "vmx_msr.h"
+
+static boolean_t
 vmx_ctl_allows_one_setting(uint64_t msr_val, int bitpos)
 {
+
 	if (msr_val & (1UL << (bitpos + 32)))
 		return (TRUE);
 	else
 		return (FALSE);
 }
 
-static bool
+static boolean_t
 vmx_ctl_allows_zero_setting(uint64_t msr_val, int bitpos)
 {
+
 	if ((msr_val & (1UL << bitpos)) == 0)
 		return (TRUE);
 	else
 		return (FALSE);
 }
 
-int vmx_set_ctlreg(hv_vmx_capability_t cap_field, uint32_t ones_mask,
-	uint32_t zeros_mask, uint32_t *retval)
+uint32_t
+vmx_revision(void)
+{
+
+	return (rdmsr(MSR_VMX_BASIC) & 0xffffffff);
+}
+
+/*
+ * Generate a bitmask to be used for the VMCS execution control fields.
+ *
+ * The caller specifies what bits should be set to one in 'ones_mask'
+ * and what bits should be set to zero in 'zeros_mask'. The don't-care
+ * bits are set to the default value. The default values are obtained
+ * based on "Algorithm 3" in Section 27.5.1 "Algorithms for Determining
+ * VMX Capabilities".
+ *
+ * Returns zero on success and non-zero on error.
+ */
+int
+vmx_set_ctlreg(int ctl_reg, int true_ctl_reg, uint32_t ones_mask,
+	       uint32_t zeros_mask, uint32_t *retval)
 {
 	int i;
-	uint64_t cap;
-	bool one_allowed, zero_allowed;
+	uint64_t val, trueval;
+	boolean_t true_ctls_avail, one_allowed, zero_allowed;
 
 	/* We cannot ask the same bit to be set to both '1' and '0' */
-	if ((ones_mask ^ zeros_mask) != (ones_mask | zeros_mask)) {
-		return EINVAL;
-	}
+	if ((ones_mask ^ zeros_mask) != (ones_mask | zeros_mask))
+		return (EINVAL);
 
-	if (hv_vmx_read_capability(cap_field, &cap)) {
-		return EINVAL;
-	}
+	if (rdmsr(MSR_VMX_BASIC) & (1UL << 55))
+		true_ctls_avail = TRUE;
+	else
+		true_ctls_avail = FALSE;
+
+	val = rdmsr(ctl_reg);
+	if (true_ctls_avail)
+		trueval = rdmsr(true_ctl_reg);		/* step c */
+	else
+		trueval = val;				/* step a */
 
 	for (i = 0; i < 32; i++) {
-		one_allowed = vmx_ctl_allows_one_setting(cap, i);
-		zero_allowed = vmx_ctl_allows_zero_setting(cap, i);
+		one_allowed = vmx_ctl_allows_one_setting(trueval, i);
+		zero_allowed = vmx_ctl_allows_zero_setting(trueval, i);
 
-		if (zero_allowed && !one_allowed) {
-			/* must be zero */
-			if (ones_mask & (1 << i)) {
-				fprintf(stderr,
-					"vmx_set_ctlreg: cap_field: %d bit: %d must be zero\n",
-					cap_field, i);
+		KASSERT(one_allowed || zero_allowed,
+			("invalid zero/one setting for bit %d of ctl 0x%0x, "
+			 "truectl 0x%0x\n", i, ctl_reg, true_ctl_reg));
+
+		if (zero_allowed && !one_allowed) {		/* b(i),c(i) */
+			if (ones_mask & (1 << i))
 				return (EINVAL);
-			}
 			*retval &= ~(1 << i);
-		} else if (one_allowed && !zero_allowed) {
-			/* must be one */
-			if (zeros_mask & (1 << i)) {
-				fprintf(stderr,
-					"vmx_set_ctlreg: cap_field: %d bit: %d must be one\n",
-					cap_field, i);
+		} else if (one_allowed && !zero_allowed) {	/* b(i),c(i) */
+			if (zeros_mask & (1 << i))
 				return (EINVAL);
-			}
 			*retval |= 1 << i;
 		} else {
-			/* don't care */
-			if (zeros_mask & (1 << i)){
+			if (zeros_mask & (1 << i))	/* b(ii),c(ii) */
 				*retval &= ~(1 << i);
-			} else if (ones_mask & (1 << i)) {
+			else if (ones_mask & (1 << i)) /* b(ii), c(ii) */
 				*retval |= 1 << i;
-			} else {
-				/* XXX: don't allow unspecified don't cares */
-				fprintf(stderr,
-					"vmx_set_ctlreg: cap_field: %d bit: %d unspecified "
-					"don't care\n", cap_field, i);
-				return (EINVAL);
+			else if (!true_ctls_avail)
+				*retval &= ~(1 << i);	/* b(iii) */
+			else if (vmx_ctl_allows_zero_setting(val, i))/* c(iii)*/
+				*retval &= ~(1 << i);
+			else if (vmx_ctl_allows_one_setting(val, i)) /* c(iv) */
+				*retval |= 1 << i;
+			else {
+				panic("vmx_set_ctlreg: unable to determine "
+				      "correct value of ctl bit %d for msr "
+				      "0x%0x and true msr 0x%0x", i, ctl_reg,
+				      true_ctl_reg);
 			}
 		}
 	}
@@ -114,9 +141,93 @@ int vmx_set_ctlreg(hv_vmx_capability_t cap_field, uint32_t ones_mask,
 	return (0);
 }
 
+void
+msr_bitmap_initialize(char *bitmap)
+{
+
+	memset(bitmap, 0xff, PAGE_SIZE);
+}
+
+int
+msr_bitmap_change_access(char *bitmap, u_int msr, int access)
+{
+	int byte, bit;
+
+	if (msr <= 0x00001FFF)
+		byte = msr / 8;
+	else if (msr >= 0xC0000000 && msr <= 0xC0001FFF)
+		byte = 1024 + (msr - 0xC0000000) / 8;
+	else
+		return (EINVAL);
+
+	bit = msr & 0x7;
+
+	if (access & MSR_BITMAP_ACCESS_READ)
+		bitmap[byte] &= ~(1 << bit);
+	else
+		bitmap[byte] |= 1 << bit;
+
+	byte += 2048;
+	if (access & MSR_BITMAP_ACCESS_WRITE)
+		bitmap[byte] &= ~(1 << bit);
+	else
+		bitmap[byte] |= 1 << bit;
+
+	return (0);
+}
+
 static uint64_t misc_enable;
 static uint64_t platform_info;
 static uint64_t turbo_ratio_limit;
+static uint64_t host_msrs[GUEST_MSR_NUM];
+
+static bool
+nehalem_cpu(void)
+{
+	u_int family, model;
+
+	/*
+	 * The family:model numbers belonging to the Nehalem microarchitecture
+	 * are documented in Section 35.5, Intel SDM dated Feb 2014.
+	 */
+	family = CPUID_TO_FAMILY(cpu_id);
+	model = CPUID_TO_MODEL(cpu_id);
+	if (family == 0x6) {
+		switch (model) {
+		case 0x1A:
+		case 0x1E:
+		case 0x1F:
+		case 0x2E:
+			return (true);
+		default:
+			break;
+		}
+	}
+	return (false);
+}
+
+static bool
+westmere_cpu(void)
+{
+	u_int family, model;
+
+	/*
+	 * The family:model numbers belonging to the Westmere microarchitecture
+	 * are documented in Section 35.6, Intel SDM dated Feb 2014.
+	 */
+	family = CPUID_TO_FAMILY(cpu_id);
+	model = CPUID_TO_MODEL(cpu_id);
+	if (family == 0x6) {
+		switch (model) {
+		case 0x25:
+		case 0x2C:
+			return (true);
+		default:
+			break;
+		}
+	}
+	return (false);
+}
 
 static bool
 pat_valid(uint64_t val)
@@ -138,24 +249,24 @@ pat_valid(uint64_t val)
 }
 
 void
-vmx_msr_init(void) {
-	uint64_t bus_freq, tsc_freq, ratio;
-	size_t length;
+vmx_msr_init(void)
+{
+	uint64_t bus_freq, ratio;
 	int i;
 
-	length = sizeof(uint64_t);
+	/*
+	 * It is safe to cache the values of the following MSRs because
+	 * they don't change based on curcpu, curproc or curthread.
+	 */
+	host_msrs[IDX_MSR_LSTAR] = rdmsr(MSR_LSTAR);
+	host_msrs[IDX_MSR_CSTAR] = rdmsr(MSR_CSTAR);
+	host_msrs[IDX_MSR_STAR] = rdmsr(MSR_STAR);
+	host_msrs[IDX_MSR_SF_MASK] = rdmsr(MSR_SF_MASK);
 
-	if (sysctlbyname("machdep.tsc.frequency", &tsc_freq, &length, NULL, 0)) {
-	  xhyve_abort("machdep.tsc.frequency\n");
-	}
-
-	if (sysctlbyname("hw.busfrequency", &bus_freq, &length, NULL, 0)) {
-	  xhyve_abort("hw.busfrequency\n");
-	}
-
-	/* Initialize emulated MSRs */
-	/* FIXME */
-	misc_enable = 1;
+	/*
+	 * Initialize emulated MSRs
+	 */
+	misc_enable = rdmsr(MSR_IA32_MISC_ENABLE);
 	/*
 	 * Set mandatory bits
 	 *  11:   branch trace disabled
@@ -164,8 +275,13 @@ vmx_msr_init(void) {
 	 *  16:   SpeedStep enable
 	 *  18:   enable MONITOR FSM
 	 */
-	misc_enable |= (1u << 12) | (1u << 11);
-	misc_enable &= ~((1u << 18) | (1u << 16));
+	misc_enable |= (1 << 12) | (1 << 11);
+	misc_enable &= ~((1 << 18) | (1 << 16));
+
+	if (nehalem_cpu() || westmere_cpu())
+		bus_freq = 133330000;		/* 133Mhz */
+	else
+		bus_freq = 100000000;		/* 100Mhz */
 
 	/*
 	 * XXXtime
@@ -197,9 +313,8 @@ vmx_msr_init(void) {
 	 * However, the unused bits are reserved so we pretend that all bits
 	 * in this MSR are valid.
 	 */
-	for (i = 0; i < 8; i++) {
-	  turbo_ratio_limit = (turbo_ratio_limit << 8) | ratio;
-	}
+	for (i = 0; i < 8; i++)
+		turbo_ratio_limit = (turbo_ratio_limit << 8) | ratio;
 }
 
 void
@@ -209,30 +324,69 @@ vmx_msr_guest_init(struct vmx *vmx, int vcpuid)
 
 	guest_msrs = vmx->guest_msrs[vcpuid];
 
-
-	hv_vcpu_enable_native_msr(((hv_vcpuid_t) vcpuid), MSR_LSTAR, 1);
-	hv_vcpu_enable_native_msr(((hv_vcpuid_t) vcpuid), MSR_CSTAR, 1);
-	hv_vcpu_enable_native_msr(((hv_vcpuid_t) vcpuid), MSR_STAR, 1);
-	hv_vcpu_enable_native_msr(((hv_vcpuid_t) vcpuid), MSR_SF_MASK, 1);
-	hv_vcpu_enable_native_msr(((hv_vcpuid_t) vcpuid), MSR_KGSBASE, 1);
+	/*
+	 * The permissions bitmap is shared between all vcpus so initialize it
+	 * once when initializing the vBSP.
+	 */
+	if (vcpuid == 0) {
+		guest_msr_rw(vmx, MSR_LSTAR);
+		guest_msr_rw(vmx, MSR_CSTAR);
+		guest_msr_rw(vmx, MSR_STAR);
+		guest_msr_rw(vmx, MSR_SF_MASK);
+		guest_msr_rw(vmx, MSR_KGSBASE);
+	}
 
 	/*
 	 * Initialize guest IA32_PAT MSR with default value after reset.
 	 */
 	guest_msrs[IDX_MSR_PAT] = PAT_VALUE(0, PAT_WRITE_BACK) |
-		PAT_VALUE(1, PAT_WRITE_THROUGH) |
-		PAT_VALUE(2, PAT_UNCACHED)      |
-		PAT_VALUE(3, PAT_UNCACHEABLE)   |
-		PAT_VALUE(4, PAT_WRITE_BACK)    |
-		PAT_VALUE(5, PAT_WRITE_THROUGH) |
-		PAT_VALUE(6, PAT_UNCACHED)      |
-		PAT_VALUE(7, PAT_UNCACHEABLE);
+	    PAT_VALUE(1, PAT_WRITE_THROUGH)	|
+	    PAT_VALUE(2, PAT_UNCACHED)		|
+	    PAT_VALUE(3, PAT_UNCACHEABLE)	|
+	    PAT_VALUE(4, PAT_WRITE_BACK)	|
+	    PAT_VALUE(5, PAT_WRITE_THROUGH)	|
+	    PAT_VALUE(6, PAT_UNCACHED)		|
+	    PAT_VALUE(7, PAT_UNCACHEABLE);
 
 	return;
 }
 
+void
+vmx_msr_guest_enter(struct vmx *vmx, int vcpuid)
+{
+	uint64_t *guest_msrs = vmx->guest_msrs[vcpuid];
+
+	/* Save host MSRs (if any) and restore guest MSRs */
+	wrmsr(MSR_LSTAR, guest_msrs[IDX_MSR_LSTAR]);
+	wrmsr(MSR_CSTAR, guest_msrs[IDX_MSR_CSTAR]);
+	wrmsr(MSR_STAR, guest_msrs[IDX_MSR_STAR]);
+	wrmsr(MSR_SF_MASK, guest_msrs[IDX_MSR_SF_MASK]);
+	wrmsr(MSR_KGSBASE, guest_msrs[IDX_MSR_KGSBASE]);
+}
+
+void
+vmx_msr_guest_exit(struct vmx *vmx, int vcpuid)
+{
+	uint64_t *guest_msrs = vmx->guest_msrs[vcpuid];
+
+	/* Save guest MSRs */
+	guest_msrs[IDX_MSR_LSTAR] = rdmsr(MSR_LSTAR);
+	guest_msrs[IDX_MSR_CSTAR] = rdmsr(MSR_CSTAR);
+	guest_msrs[IDX_MSR_STAR] = rdmsr(MSR_STAR);
+	guest_msrs[IDX_MSR_SF_MASK] = rdmsr(MSR_SF_MASK);
+	guest_msrs[IDX_MSR_KGSBASE] = rdmsr(MSR_KGSBASE);
+
+	/* Restore host MSRs */
+	wrmsr(MSR_LSTAR, host_msrs[IDX_MSR_LSTAR]);
+	wrmsr(MSR_CSTAR, host_msrs[IDX_MSR_CSTAR]);
+	wrmsr(MSR_STAR, host_msrs[IDX_MSR_STAR]);
+	wrmsr(MSR_SF_MASK, host_msrs[IDX_MSR_SF_MASK]);
+
+	/* MSR_KGSBASE will be restored on the way back to userspace */
+}
+
 int
-vmx_rdmsr(struct vmx *vmx, int vcpuid, u_int num, uint64_t *val)
+vmx_rdmsr(struct vmx *vmx, int vcpuid, u_int num, uint64_t *val, bool *retu)
 {
 	const uint64_t *guest_msrs;
 	int error;
@@ -241,26 +395,14 @@ vmx_rdmsr(struct vmx *vmx, int vcpuid, u_int num, uint64_t *val)
 	error = 0;
 
 	switch (num) {
-	case MSR_EFER:
-		*val = vmcs_read(vcpuid, VMCS_GUEST_IA32_EFER);
-		break;
 	case MSR_MCG_CAP:
 	case MSR_MCG_STATUS:
 		*val = 0;
 		break;
 	case MSR_MTRRcap:
 	case MSR_MTRRdefType:
-	case MSR_MTRR4kBase:
-	case MSR_MTRR4kBase + 1:
-	case MSR_MTRR4kBase + 2:
-	case MSR_MTRR4kBase + 3:
-	case MSR_MTRR4kBase + 4:
-	case MSR_MTRR4kBase + 5:
-	case MSR_MTRR4kBase + 6:
-	case MSR_MTRR4kBase + 7:
-	case MSR_MTRR4kBase + 8:
-	case MSR_MTRR16kBase:
-	case MSR_MTRR16kBase + 1:
+	case MSR_MTRR4kBase ... MSR_MTRR4kBase + 8:
+	case MSR_MTRR16kBase ... MSR_MTRR16kBase + 1:
 	case MSR_MTRR64kBase:
 		*val = 0;
 		break;
@@ -285,39 +427,27 @@ vmx_rdmsr(struct vmx *vmx, int vcpuid, u_int num, uint64_t *val)
 }
 
 int
-vmx_wrmsr(struct vmx *vmx, int vcpuid, u_int num, uint64_t val)
+vmx_wrmsr(struct vmx *vmx, int vcpuid, u_int num, uint64_t val, bool *retu)
 {
 	uint64_t *guest_msrs;
 	uint64_t changed;
 	int error;
-
+	
 	guest_msrs = vmx->guest_msrs[vcpuid];
 	error = 0;
 
 	switch (num) {
-	case MSR_EFER:
-		vmcs_write(vcpuid, VMCS_GUEST_IA32_EFER, val);
-		break;
 	case MSR_MCG_CAP:
 	case MSR_MCG_STATUS:
-		break;      /* ignore writes */
+		break;		/* ignore writes */
 	case MSR_MTRRcap:
 		vm_inject_gp(vmx->vm, vcpuid);
 		break;
 	case MSR_MTRRdefType:
-	case MSR_MTRR4kBase:
-	case MSR_MTRR4kBase + 1:
-	case MSR_MTRR4kBase + 2:
-	case MSR_MTRR4kBase + 3:
-	case MSR_MTRR4kBase + 4:
-	case MSR_MTRR4kBase + 5:
-	case MSR_MTRR4kBase + 6:
-	case MSR_MTRR4kBase + 7:
-	case MSR_MTRR4kBase + 8:
-	case MSR_MTRR16kBase:
-	case MSR_MTRR16kBase + 1:
+	case MSR_MTRR4kBase ... MSR_MTRR4kBase + 8:
+	case MSR_MTRR16kBase ... MSR_MTRR16kBase + 1:
 	case MSR_MTRR64kBase:
-		break;      /* Ignore writes */
+		break;		/* Ignore writes */
 	case MSR_IA32_MISC_ENABLE:
 		changed = val ^ misc_enable;
 		/*

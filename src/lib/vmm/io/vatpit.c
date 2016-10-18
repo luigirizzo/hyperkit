@@ -1,7 +1,6 @@
 /*-
  * Copyright (c) 2014 Tycho Nightingale <tycho.nightingale@pluribusnetworks.com>
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -26,20 +25,30 @@
  * SUCH DAMAGE.
  */
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/timerreg.h>
-#include <xhyve/vmm/vmm_callout.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/io/vatpic.h>
-#include <xhyve/vmm/io/vatpit.h>
-#include <xhyve/vmm/io/vioapic.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
-#define VATPIT_LOCK_INIT(v) xpthread_mutex_init(&(v)->lock)
-#define VATPIT_LOCK(v) xpthread_mutex_lock(&(v)->lock)
-#define VATPIT_UNLOCK(v) xpthread_mutex_unlock(&(v)->lock)
+#include <sys/param.h>
+#include <sys/types.h>
+#include <sys/queue.h>
+#include <sys/kernel.h>
+#include <sys/lock.h>
+#include <sys/malloc.h>
+#include <sys/mutex.h>
+#include <sys/systm.h>
+
+#include <machine/vmm.h>
+
+#include "vmm_ktr.h"
+#include "vatpic.h"
+#include "vioapic.h"
+#include "vatpit.h"
+
+static MALLOC_DEFINE(M_VATPIT, "atpit", "bhyve virtual atpit (8254)");
+
+#define	VATPIT_LOCK(vatpit)		mtx_lock_spin(&((vatpit)->mtx))
+#define	VATPIT_UNLOCK(vatpit)		mtx_unlock_spin(&((vatpit)->mtx))
+#define	VATPIT_LOCKED(vatpit)		mtx_owned(&((vatpit)->mtx))
 
 #define	TIMER_SEL_MASK		0xc0
 #define	TIMER_RW_MASK		0x30
@@ -60,36 +69,36 @@
 #define	PIT_8254_FREQ		1193182
 #define	TIMER_DIV(freq, hz)	(((freq) + (hz) / 2) / (hz))
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct vatpit_callout_arg {
-	struct vatpit *vatpit;
-	int channel_num;
+	struct vatpit	*vatpit;
+	int		channel_num;
 };
 
+
 struct channel {
-	int mode;
-	uint16_t initial; /* initial counter value */
-	sbintime_t now_sbt; /* uptime when counter was loaded */
-	uint8_t cr[2];
-	uint8_t ol[2];
-	bool slatched; /* status latched */
-	uint8_t status;
-	int crbyte;
-	int olbyte;
-	int frbyte;
-	struct callout callout;
-	sbintime_t callout_sbt; /* target time */
+	int		mode;
+	uint16_t	initial;	/* initial counter value */
+	sbintime_t	now_sbt;	/* uptime when counter was loaded */
+	uint8_t		cr[2];
+	uint8_t		ol[2];
+	bool		slatched;	/* status latched */
+	uint8_t		status;
+	int		crbyte;
+	int		olbyte;
+	int		frbyte;
+	struct callout	callout;
+	sbintime_t	callout_sbt;	/* target time */
 	struct vatpit_callout_arg callout_arg;
 };
 
 struct vatpit {
-	struct vm *vm;
-	pthread_mutex_t lock;
-	sbintime_t freq_sbt;
-	struct channel channel[3];
+	struct vm	*vm;
+	struct mtx	mtx;
+
+	sbintime_t	freq_sbt;
+
+	struct channel	channel[3];
 };
-#pragma clang diagnostic pop
 
 static void pit_timer_start_cntr0(struct vatpit *vatpit);
 
@@ -155,11 +164,12 @@ static void
 pit_timer_start_cntr0(struct vatpit *vatpit)
 {
 	struct channel *c;
-	sbintime_t now, delta;
+	sbintime_t now, delta, precision;
 
 	c = &vatpit->channel[0];
 	if (c->initial != 0) {
 		delta = c->initial * vatpit->freq_sbt;
+		precision = delta >> tc_precexp;
 		c->callout_sbt = c->callout_sbt + delta;
 
 		/*
@@ -172,7 +182,7 @@ pit_timer_start_cntr0(struct vatpit *vatpit)
 			c->callout_sbt = now + delta;
 
 		callout_reset_sbt(&c->callout, c->callout_sbt,
-		    0, vatpit_callout_handler, &c->callout_arg,
+		    precision, vatpit_callout_handler, &c->callout_arg,
 		    C_ABSOLUTE);
 	}
 }
@@ -207,8 +217,8 @@ pit_update_counter(struct vatpit *vatpit, struct channel *c, bool latch)
 
 	if (latch) {
 		c->olbyte = 2;
-		c->ol[1] = (uint8_t) lval; /* LSB */
-		c->ol[0] = (uint8_t) (lval >> 8); /* MSB */
+		c->ol[1] = lval;		/* LSB */
+		c->ol[0] = lval >> 8;		/* MSB */
 	}
 
 	return (lval);
@@ -306,7 +316,7 @@ vatpit_update_mode(struct vatpit *vatpit, uint8_t val)
 }
 
 int
-vatpit_handler(struct vm *vm, UNUSED int vcpuid, bool in, int port, int bytes,
+vatpit_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
     uint32_t *eax)
 {
 	struct vatpit *vatpit;
@@ -319,7 +329,7 @@ vatpit_handler(struct vm *vm, UNUSED int vcpuid, bool in, int port, int bytes,
 	if (bytes != 1)
 		return (-1);
 
-	val = (uint8_t) *eax;
+	val = *eax;
 
 	if (port == TIMER_MODE) {
 		if (in) {
@@ -336,7 +346,7 @@ vatpit_handler(struct vm *vm, UNUSED int vcpuid, bool in, int port, int bytes,
 
 	/* counter ports */
 	KASSERT(port >= TIMER_CNTR0 && port <= TIMER_CNTR2,
-	    ("invalid port 0x%x\n", port));
+	    ("invalid port 0x%x", port));
 	c = &vatpit->channel[port - TIMER_CNTR0];
 
 	VATPIT_LOCK(vatpit);
@@ -367,13 +377,12 @@ vatpit_handler(struct vm *vm, UNUSED int vcpuid, bool in, int port, int bytes,
 		}  else
 			*eax = c->ol[--c->olbyte];
 	} else {
-		c->cr[c->crbyte++] = (uint8_t) *eax;
+		c->cr[c->crbyte++] = *eax;
 		if (c->crbyte == 2) {
 			c->status &= ~TIMER_STS_NULLCNT;
 			c->frbyte = 0;
 			c->crbyte = 0;
-			c->initial = (uint16_t) c->cr[0];
-			c->initial |= (((uint16_t) c->cr[1]) << 8);
+			c->initial = c->cr[0] | (uint16_t)c->cr[1] << 8;
 			c->now_sbt = sbinuptime();
 			/* Start an interval timer for channel 0 */
 			if (port == TIMER_CNTR0) {
@@ -390,8 +399,8 @@ vatpit_handler(struct vm *vm, UNUSED int vcpuid, bool in, int port, int bytes,
 }
 
 int
-vatpit_nmisc_handler(struct vm *vm, UNUSED int vcpuid, bool in, UNUSED int port,
-	UNUSED int bytes, uint32_t *eax)
+vatpit_nmisc_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
+    uint32_t *eax)
 {
 	struct vatpit *vatpit;
 
@@ -418,18 +427,16 @@ vatpit_init(struct vm *vm)
 	struct vatpit_callout_arg *arg;
 	int i;
 
-	vatpit = malloc(sizeof(struct vatpit));
-	assert(vatpit);
-	bzero(vatpit, sizeof(struct vatpit));
+	vatpit = malloc(sizeof(struct vatpit), M_VATPIT, M_WAITOK | M_ZERO);
 	vatpit->vm = vm;
 
-	VATPIT_LOCK_INIT(vatpit);
+	mtx_init(&vatpit->mtx, "vatpit lock", NULL, MTX_SPIN);
 
 	FREQ2BT(PIT_8254_FREQ, &bt);
 	vatpit->freq_sbt = bttosbt(bt);
 
 	for (i = 0; i < 3; i++) {
-		callout_init(&vatpit->channel[i].callout, true);
+		callout_init(&vatpit->channel[i].callout, 1);
 		arg = &vatpit->channel[i].callout_arg;
 		arg->vatpit = vatpit;
 		arg->channel_num = i;
@@ -446,5 +453,5 @@ vatpit_cleanup(struct vatpit *vatpit)
 	for (i = 0; i < 3; i++)
 		callout_drain(&vatpit->channel[i].callout);
 
-	free(vatpit);
+	free(vatpit, M_VATPIT);
 }

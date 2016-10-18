@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,15 +26,20 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <errno.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/support/apicreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/vmm_lapic.h>
-#include <xhyve/vmm/io/vlapic.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/smp.h>
+
+#include <x86/specialreg.h>
+#include <x86/apicreg.h>
+
+#include <machine/vmm.h>
+#include "vmm_ktr.h"
+#include "vmm_lapic.h"
+#include "vlapic.h"
 
 /*
  * Some MSI message definitions
@@ -79,11 +83,11 @@ lapic_set_local_intr(struct vm *vm, int cpu, int vector)
 	if (cpu == -1)
 		dmask = vm_active_cpus(vm);
 	else
-		CPU_SETOF(((unsigned) cpu), &dmask);
+		CPU_SETOF(cpu, &dmask);
 	error = 0;
 	while ((cpu = CPU_FFS(&dmask)) != 0) {
 		cpu--;
-		CPU_CLR(((unsigned) cpu), &dmask);
+		CPU_CLR(cpu, &dmask);
 		vlapic = vm_lapic(vm, cpu);
 		error = vlapic_trigger_lvt(vlapic, vector);
 		if (error)
@@ -100,10 +104,10 @@ lapic_intr_msi(struct vm *vm, uint64_t addr, uint64_t msg)
 	uint32_t dest;
 	bool phys;
 
-	VM_CTR2(vm, "lapic MSI addr: %#llx msg: %#llx", addr, msg);
+	VM_CTR2(vm, "lapic MSI addr: %#lx msg: %#lx", addr, msg);
 
 	if ((addr & MSI_X86_ADDR_MASK) != MSI_X86_ADDR_BASE) {
-		VM_CTR1(vm, "lapic MSI invalid addr %#llx", addr);
+		VM_CTR1(vm, "lapic MSI invalid addr %#lx", addr);
 		return (-1);
 	}
 
@@ -131,7 +135,7 @@ lapic_intr_msi(struct vm *vm, uint64_t addr, uint64_t msg)
 	return (0);
 }
 
-static bool
+static boolean_t
 x2apic_msr(u_int msr)
 {
 	if (msr >= 0x800 && msr <= 0xBFF)
@@ -147,7 +151,7 @@ x2apic_msr_to_regoff(u_int msr)
 	return ((msr - 0x800) << 4);
 }
 
-bool
+boolean_t
 lapic_msr(u_int msr)
 {
 
@@ -203,7 +207,7 @@ lapic_mmio_write(void *vm, int cpu, uint64_t gpa, uint64_t wval, int size,
 	int error;
 	uint64_t off;
 	struct vlapic *vlapic;
-//printf("lapic_mmio_write 0x%016llx 0x%016llx\n", gpa, wval);
+
 	off = gpa - DEFAULT_APIC_BASE;
 
 	/*
@@ -219,8 +223,8 @@ lapic_mmio_write(void *vm, int cpu, uint64_t gpa, uint64_t wval, int size,
 }
 
 int
-lapic_mmio_read(void *vm, int cpu, uint64_t gpa, uint64_t *rval,
-	UNUSED int size, void *arg)
+lapic_mmio_read(void *vm, int cpu, uint64_t gpa, uint64_t *rval, int size,
+		void *arg)
 {
 	int error;
 	uint64_t off;
@@ -233,12 +237,11 @@ lapic_mmio_read(void *vm, int cpu, uint64_t gpa, uint64_t *rval,
 	 * 16-byte boundary.  They are also suggested to be 4 bytes
 	 * wide, alas not all OSes follow suggestions.
 	 */
-	off &= ~((uint64_t) 3);
+	off &= ~3;
 	if (off & 0xf)
 		return (EINVAL);
 
 	vlapic = vm_lapic(vm, cpu);
 	error = vlapic_read(vlapic, 1, off, rval, arg);
-	//printf("lapic_mmio_read 0x%016llx (0x%016llx)\n", gpa, *rval);
 	return (error);
 }

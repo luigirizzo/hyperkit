@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2014, Neel Natu (neel@freebsd.org)
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,13 +24,18 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <assert.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_callout.h>
-#include <xhyve/vmm/io/vpmtmr.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/kernel.h>
+#include <sys/malloc.h>
+#include <sys/systm.h>
+
+#include <machine/vmm.h>
+
+#include "vpmtmr.h"
 
 /*
  * The ACPI Power Management timer is a free-running 24- or 32-bit
@@ -42,24 +46,21 @@
 
 #define PMTMR_FREQ	3579545  /* 3.579545MHz */
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct vpmtmr {
 	sbintime_t	freq_sbt;
 	sbintime_t	baseuptime;
 	uint32_t	baseval;
 };
-#pragma clang diagnostic pop
+
+static MALLOC_DEFINE(M_VPMTMR, "vpmtmr", "bhyve virtual acpi timer");
 
 struct vpmtmr *
-vpmtmr_init(UNUSED struct vm *vm)
+vpmtmr_init(struct vm *vm)
 {
 	struct vpmtmr *vpmtmr;
 	struct bintime bt;
 
-	vpmtmr = malloc(sizeof(struct vpmtmr));
-	assert(vpmtmr);
-	bzero(vpmtmr, sizeof(struct vpmtmr));
+	vpmtmr = malloc(sizeof(struct vpmtmr), M_VPMTMR, M_WAITOK | M_ZERO);
 	vpmtmr->baseuptime = sbinuptime();
 	vpmtmr->baseval = 0;
 
@@ -73,12 +74,12 @@ void
 vpmtmr_cleanup(struct vpmtmr *vpmtmr)
 {
 
-	free(vpmtmr);
+	free(vpmtmr, M_VPMTMR);
 }
 
 int
-vpmtmr_handler(struct vm *vm, UNUSED int vcpuid, bool in, UNUSED int port,
-	int bytes, uint32_t *val)
+vpmtmr_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
+    uint32_t *val)
 {
 	struct vpmtmr *vpmtmr;
 	sbintime_t now, delta;
@@ -95,8 +96,8 @@ vpmtmr_handler(struct vm *vm, UNUSED int vcpuid, bool in, UNUSED int port,
 	now = sbinuptime();
 	delta = now - vpmtmr->baseuptime;
 	KASSERT(delta >= 0, ("vpmtmr_handler: uptime went backwards: "
-	    "%#llx to %#llx", vpmtmr->baseuptime, now));
-	*val = (uint32_t) (vpmtmr->baseval + (delta / vpmtmr->freq_sbt));
+	    "%#lx to %#lx", vpmtmr->baseuptime, now));
+	*val = vpmtmr->baseval + delta / vpmtmr->freq_sbt;
 
 	return (0);
 }

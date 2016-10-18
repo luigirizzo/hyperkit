@@ -26,19 +26,58 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	_VMM_HOST_H_
+#define	_VMM_HOST_H_
 
-#include <stdint.h>
+#ifndef	_KERNEL
+#error "no user-servicable parts inside"
+#endif
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct xsave_limits {
 	int		xsave_enabled;
 	uint64_t	xcr0_allowed;
 	uint32_t	xsave_max_size;
 };
-#pragma clang diagnostic pop
 
 void vmm_host_state_init(void);
 
+uint64_t vmm_get_host_pat(void);
+uint64_t vmm_get_host_efer(void);
+uint64_t vmm_get_host_cr0(void);
+uint64_t vmm_get_host_cr4(void);
+uint64_t vmm_get_host_xcr0(void);
+uint64_t vmm_get_host_datasel(void);
+uint64_t vmm_get_host_codesel(void);
+uint64_t vmm_get_host_tsssel(void);
+uint64_t vmm_get_host_fsbase(void);
+uint64_t vmm_get_host_idtrbase(void);
 const struct xsave_limits *vmm_get_xsave_limits(void);
+
+/*
+ * Inline access to host state that is used on every VM entry
+ */
+static __inline uint64_t
+vmm_get_host_trbase(void)
+{
+
+	return ((uint64_t)PCPU_GET(tssp));
+}
+
+static __inline uint64_t
+vmm_get_host_gdtrbase(void)
+{
+
+	return ((uint64_t)&gdt[NGDT * curcpu]);
+}
+
+struct pcpu;
+extern struct pcpu __pcpu[];
+
+static __inline uint64_t
+vmm_get_host_gsbase(void)
+{
+
+	return ((uint64_t)&__pcpu[curcpu]);
+}
+
+#endif

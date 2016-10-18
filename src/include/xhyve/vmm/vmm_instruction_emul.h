@@ -26,10 +26,19 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	_VMM_INSTRUCTION_EMUL_H_
+#define	_VMM_INSTRUCTION_EMUL_H_
 
-#include <stdint.h>
-#include <xhyve/vmm/vmm.h>
+#include <sys/mman.h>
+
+/*
+ * Callback functions to read and write memory regions.
+ */
+typedef int (*mem_region_read_t)(void *vm, int cpuid, uint64_t gpa,
+				 uint64_t *rval, int rsize, void *arg);
+
+typedef int (*mem_region_write_t)(void *vm, int cpuid, uint64_t gpa,
+				  uint64_t wval, int wsize, void *arg);
 
 /*
  * Emulate the decoded 'vie' instruction.
@@ -49,9 +58,22 @@ int vmm_emulate_instruction(void *vm, int cpuid, uint64_t gpa, struct vie *vie,
 int vie_update_register(void *vm, int vcpuid, enum vm_reg_name reg,
     uint64_t val, int size);
 
+/*
+ * Returns 1 if an alignment check exception should be injected and 0 otherwise.
+ */
+int vie_alignment_check(int cpl, int operand_size, uint64_t cr0,
+    uint64_t rflags, uint64_t gla);
+
 /* Returns 1 if the 'gla' is not canonical and 0 otherwise. */
 int vie_canonical_check(enum vm_cpu_mode cpu_mode, uint64_t gla);
 
+uint64_t vie_size2mask(int size);
+
+int vie_calculate_gla(enum vm_cpu_mode cpu_mode, enum vm_reg_name seg,
+    struct seg_desc *desc, uint64_t off, int length, int addrsize, int prot,
+    uint64_t *gla);
+
+#ifdef _KERNEL
 /*
  * APIs to fetch and decode the instruction from nested page fault handler.
  *
@@ -81,7 +103,7 @@ void vie_init(struct vie *vie, const char *inst_bytes, int inst_length);
  * 'gla' is the guest linear address provided by the hardware assist
  * that caused the nested page table fault. It is used to verify that
  * the software instruction decoding is in agreement with the hardware.
- *
+ * 
  * Some hardware assists do not provide the 'gla' to the hypervisor.
  * To skip the 'gla' verification for this or any other reason pass
  * in VIE_INVALID_GLA instead.
@@ -89,3 +111,6 @@ void vie_init(struct vie *vie, const char *inst_bytes, int inst_length);
 #define	VIE_INVALID_GLA		(1UL << 63)	/* a non-canonical address */
 int vmm_decode_instruction(struct vm *vm, int cpuid, uint64_t gla,
 			   enum vm_cpu_mode cpu_mode, int csd, struct vie *vie);
+#endif	/* _KERNEL */
+
+#endif	/* _VMM_INSTRUCTION_EMUL_H_ */

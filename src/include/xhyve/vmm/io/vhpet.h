@@ -27,20 +27,18 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _VHPET_H_
+#define	_VHPET_H_
 
-#include <stdint.h>
-
-#define VHPET_BASE 0xfed00000
-#define VHPET_SIZE 0x400
-
-struct vm;
-struct vhpet;
+#define	VHPET_BASE	0xfed00000
+#define	VHPET_SIZE	1024
 
 struct vhpet *vhpet_init(struct vm *vm);
-void vhpet_cleanup(struct vhpet *vhpet);
-int vhpet_mmio_write(void *vm, int vcpuid, uint64_t gpa, uint64_t val,
-	int size, void *arg);
-int vhpet_mmio_read(void *vm, int vcpuid, uint64_t gpa, uint64_t *val,
-	int size, void *arg);
-int vhpet_getcap(uint32_t *cap);
+void 	vhpet_cleanup(struct vhpet *vhpet);
+int	vhpet_mmio_write(void *vm, int vcpuid, uint64_t gpa, uint64_t val,
+	    int size, void *arg);
+int	vhpet_mmio_read(void *vm, int vcpuid, uint64_t gpa, uint64_t *val,
+	    int size, void *arg);
+int	vhpet_getcap(struct vm_hpet_cap *cap);
+
+#endif	/* _VHPET_H_ */

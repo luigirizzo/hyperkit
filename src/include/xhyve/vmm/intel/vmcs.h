@@ -26,62 +26,75 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _VMCS_H_
+#define	_VMCS_H_
 
-#include <stdint.h>
-#include <Hypervisor/hv.h>
-#include <Hypervisor/hv_vmx.h>
-#include <xhyve/vmm/vmm.h>
+#ifdef _KERNEL
+struct vmcs {
+	uint32_t	identifier;
+	uint32_t	abort_code;
+	char		_impl_specific[PAGE_SIZE - sizeof(uint32_t) * 2];
+};
+CTASSERT(sizeof(struct vmcs) == PAGE_SIZE);
 
-int	vmcs_getreg(int vcpuid, int ident, uint64_t *rv);
-int	vmcs_setreg(int vcpuid, int ident, uint64_t val);
-int	vmcs_getdesc(int vcpuid, int ident, struct seg_desc *desc);
-int	vmcs_setdesc(int vcpuid, int ident, struct seg_desc *desc);
+/* MSR save region is composed of an array of 'struct msr_entry' */
+struct msr_entry {
+	uint32_t	index;
+	uint32_t	reserved;
+	uint64_t	val;
 
+};
+
+int vmcs_set_msr_save(struct vmcs *vmcs, u_long g_area, u_int g_count);
+int	vmcs_init(struct vmcs *vmcs);
+int	vmcs_getreg(struct vmcs *vmcs, int running, int ident, uint64_t *rv);
+int	vmcs_setreg(struct vmcs *vmcs, int running, int ident, uint64_t val);
+int	vmcs_getdesc(struct vmcs *vmcs, int running, int ident,
+		     struct seg_desc *desc);
+int	vmcs_setdesc(struct vmcs *vmcs, int running, int ident,
+		     struct seg_desc *desc);
+
+/*
+ * Avoid header pollution caused by inline use of 'vtophys()' in vmx_cpufunc.h
+ */
+#ifdef _VMX_CPUFUNC_H_
 static __inline uint64_t
-vmcs_read(int vcpuid, uint32_t encoding)
+vmcs_read(uint32_t encoding)
 {
+	int error;
 	uint64_t val;
 
-	hv_vmx_vcpu_read_vmcs(((hv_vcpuid_t) vcpuid), encoding, &val);
+	error = vmread(encoding, &val);
+	KASSERT(error == 0, ("vmcs_read(%u) error %d", encoding, error));
 	return (val);
 }
 
 static __inline void
-vmcs_write(int vcpuid, uint32_t encoding, uint64_t val)
+vmcs_write(uint32_t encoding, uint64_t val)
 {
-	if (encoding == 0x00004002) {
-		if (val == 0x0000000000000004) {
-			abort();
-		}
-	}
-	hv_vmx_vcpu_write_vmcs(((hv_vcpuid_t) vcpuid), encoding, val);
-}
+	int error;
 
-#define	vmexit_instruction_length(vcpuid) \
-	vmcs_read(vcpuid, VMCS_EXIT_INSTRUCTION_LENGTH)
-#define	vmcs_guest_rip(vcpuid) \
-	vmcs_read(vcpuid, VMCS_GUEST_RIP)
-#define	vmcs_instruction_error(vcpuid) \
-	vmcs_read(vcpuid, VMCS_INSTRUCTION_ERROR)
-#define	vmcs_exit_reason(vcpuid) \
-	(vmcs_read(vcpuid, VMCS_EXIT_REASON) & 0xffff)
-#define	vmcs_exit_qualification(vcpuid) \
-	vmcs_read(vcpuid, VMCS_EXIT_QUALIFICATION)
-#define	vmcs_guest_cr3(vcpuid) \
-	vmcs_read(vcpuid, VMCS_GUEST_CR3)
-#define	vmcs_gpa(vcpuid) \
-	vmcs_read(vcpuid, VMCS_GUEST_PHYSICAL_ADDRESS)
-#define	vmcs_gla(vcpuid) \
-	vmcs_read(vcpuid, VMCS_GUEST_LINEAR_ADDRESS)
-#define	vmcs_idt_vectoring_info(vcpuid) \
-	vmcs_read(vcpuid, VMCS_IDT_VECTORING_INFO)
-#define	vmcs_idt_vectoring_err(vcpuid) \
-	vmcs_read(vcpuid, VMCS_IDT_VECTORING_ERROR)
+	error = vmwrite(encoding, val);
+	KASSERT(error == 0, ("vmcs_write(%u) error %d", encoding, error));
+}
+#endif	/* _VMX_CPUFUNC_H_ */
+
+#define	vmexit_instruction_length()	vmcs_read(VMCS_EXIT_INSTRUCTION_LENGTH)
+#define	vmcs_guest_rip()		vmcs_read(VMCS_GUEST_RIP)
+#define	vmcs_instruction_error()	vmcs_read(VMCS_INSTRUCTION_ERROR)
+#define	vmcs_exit_reason()		(vmcs_read(VMCS_EXIT_REASON) & 0xffff)
+#define	vmcs_exit_qualification()	vmcs_read(VMCS_EXIT_QUALIFICATION)
+#define	vmcs_guest_cr3()		vmcs_read(VMCS_GUEST_CR3)
+#define	vmcs_gpa()			vmcs_read(VMCS_GUEST_PHYSICAL_ADDRESS)
+#define	vmcs_gla()			vmcs_read(VMCS_GUEST_LINEAR_ADDRESS)
+#define	vmcs_idt_vectoring_info()	vmcs_read(VMCS_IDT_VECTORING_INFO)
+#define	vmcs_idt_vectoring_err()	vmcs_read(VMCS_IDT_VECTORING_ERROR)
+
+#endif	/* _KERNEL */
 
 #define	VMCS_INITIAL			0xffffffffffffffff
 
-#define	VMCS_IDENT(encoding) ((int) (((unsigned) (encoding)) | 0x80000000))
+#define	VMCS_IDENT(encoding)		((encoding) | 0x80000000)
 /*
  * VMCS field encodings from Appendix H, Intel Architecture Manual Vol3B.
  */
@@ -329,33 +342,33 @@ vmcs_write(int vcpuid, uint32_t encoding, uint64_t val)
  *
  * Applies to VM-exits due to hardware exception or EPT fault.
  */
-#define	EXIT_QUAL_NMIUDTI	(1U << 12)
+#define	EXIT_QUAL_NMIUDTI	(1 << 12)
 /*
  * VMCS interrupt information fields
  */
 #define	VMCS_INTR_VALID		(1U << 31)
-#define	VMCS_INTR_T_MASK	0x700U		/* Interruption-info type */
-#define	VMCS_INTR_T_HWINTR	(0U << 8)
-#define	VMCS_INTR_T_NMI		(2U << 8)
-#define	VMCS_INTR_T_HWEXCEPTION	(3U << 8)
-#define	VMCS_INTR_T_SWINTR	(4U << 8)
-#define	VMCS_INTR_T_PRIV_SWEXCEPTION (5U << 8)
-#define	VMCS_INTR_T_SWEXCEPTION	(6U << 8)
-#define	VMCS_INTR_DEL_ERRCODE	(1U << 11)
+#define	VMCS_INTR_T_MASK	0x700		/* Interruption-info type */
+#define	VMCS_INTR_T_HWINTR	(0 << 8)
+#define	VMCS_INTR_T_NMI		(2 << 8)
+#define	VMCS_INTR_T_HWEXCEPTION	(3 << 8)
+#define	VMCS_INTR_T_SWINTR	(4 << 8)
+#define	VMCS_INTR_T_PRIV_SWEXCEPTION (5 << 8)
+#define	VMCS_INTR_T_SWEXCEPTION	(6 << 8)
+#define	VMCS_INTR_DEL_ERRCODE	(1 << 11)
 
 /*
  * VMCS IDT-Vectoring information fields
  */
 #define	VMCS_IDT_VEC_VALID		(1U << 31)
-#define	VMCS_IDT_VEC_ERRCODE_VALID	(1U << 11)
+#define	VMCS_IDT_VEC_ERRCODE_VALID	(1 << 11)
 
 /*
  * VMCS Guest interruptibility field
  */
-#define	VMCS_INTERRUPTIBILITY_STI_BLOCKING	(1U << 0)
-#define	VMCS_INTERRUPTIBILITY_MOVSS_BLOCKING	(1U << 1)
-#define	VMCS_INTERRUPTIBILITY_SMI_BLOCKING	(1U << 2)
-#define	VMCS_INTERRUPTIBILITY_NMI_BLOCKING	(1U << 3)
+#define	VMCS_INTERRUPTIBILITY_STI_BLOCKING	(1 << 0)
+#define	VMCS_INTERRUPTIBILITY_MOVSS_BLOCKING	(1 << 1)
+#define	VMCS_INTERRUPTIBILITY_SMI_BLOCKING	(1 << 2)
+#define	VMCS_INTERRUPTIBILITY_NMI_BLOCKING	(1 << 3)
 
 /*
  * Exit qualification for EXIT_REASON_INVAL_VMCS
@@ -384,3 +397,5 @@ vmcs_write(int vcpuid, uint32_t encoding, uint64_t val)
  * Exit qualification for APIC-write VM exit
  */
 #define	APIC_WRITE_OFFSET(qual)		((qual) & 0xFFF)
+
+#endif

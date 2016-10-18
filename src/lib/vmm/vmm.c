@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,40 +26,64 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <string.h>
-#include <errno.h>
-#include <pthread.h>
-#include <assert.h>
-#include <libkern/OSAtomic.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/atomic.h>
-#include <xhyve/support/cpuset.h>
-#include <xhyve/support/psl.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/support/apicreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_lapic.h>
-#include <xhyve/vmm/vmm_mem.h>
-#include <xhyve/vmm/vmm_ioport.h>
-#include <xhyve/vmm/vmm_instruction_emul.h>
-#include <xhyve/vmm/vmm_callout.h>
-#include <xhyve/vmm/vmm_host.h>
-#include <xhyve/vmm/vmm_stat.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/io/vatpic.h>
-#include <xhyve/vmm/io/vatpit.h>
-#include <xhyve/vmm/io/vioapic.h>
-#include <xhyve/vmm/io/vlapic.h>
-#include <xhyve/vmm/io/vhpet.h>
-#include <xhyve/vmm/io/vpmtmr.h>
-#include <xhyve/vmm/io/vrtc.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/kernel.h>
+#include <sys/module.h>
+#include <sys/sysctl.h>
+#include <sys/malloc.h>
+#include <sys/pcpu.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
+#include <sys/proc.h>
+#include <sys/rwlock.h>
+#include <sys/sched.h>
+#include <sys/smp.h>
+#include <sys/systm.h>
+
+#include <vm/vm.h>
+#include <vm/vm_object.h>
+#include <vm/vm_page.h>
+#include <vm/pmap.h>
+#include <vm/vm_map.h>
+#include <vm/vm_extern.h>
+#include <vm/vm_param.h>
+
+#include <machine/cpu.h>
+#include <machine/vm.h>
+#include <machine/pcb.h>
+#include <machine/smp.h>
+#include <x86/psl.h>
+#include <x86/apicreg.h>
+#include <machine/vmparam.h>
+
+#include <machine/vmm.h>
+#include <machine/vmm_dev.h>
+#include <machine/vmm_instruction_emul.h>
+
+#include "vmm_ioport.h"
+#include "vmm_ktr.h"
+#include "vmm_host.h"
+#include "vmm_mem.h"
+#include "vmm_util.h"
+#include "vatpic.h"
+#include "vatpit.h"
+#include "vhpet.h"
+#include "vioapic.h"
+#include "vlapic.h"
+#include "vpmtmr.h"
+#include "vrtc.h"
+#include "vmm_stat.h"
+#include "vmm_lapic.h"
+
+#include "io/ppt.h"
+#include "io/iommu.h"
 
 struct vlapic;
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 /*
  * Initialization:
  * (a) allocated when vcpu is created
@@ -69,37 +92,38 @@ struct vlapic;
  * (x) initialized before use
  */
 struct vcpu {
-	pthread_mutex_t lock; /* (o) protects 'state' */
-	pthread_mutex_t state_sleep_mtx;
-	pthread_cond_t state_sleep_cnd;
-	pthread_mutex_t vcpu_sleep_mtx;
-	pthread_cond_t vcpu_sleep_cnd;
-	enum vcpu_state state; /* (o) vcpu state */
-	struct vlapic *vlapic; /* (i) APIC device model */
-	enum x2apic_state x2apic_state; /* (i) APIC mode */
-	uint64_t exitintinfo; /* (i) events pending at VM exit */
-	int nmi_pending; /* (i) NMI pending */
-	int extint_pending; /* (i) INTR pending */
-	int exception_pending; /* (i) exception pending */
-	int exc_vector; /* (x) exception collateral */
-	int exc_errcode_valid;
+	struct mtx 	mtx;		/* (o) protects 'state' and 'hostcpu' */
+	enum vcpu_state	state;		/* (o) vcpu state */
+	int		hostcpu;	/* (o) vcpu's host cpu */
+	int		reqidle;	/* (i) request vcpu to idle */
+	struct vlapic	*vlapic;	/* (i) APIC device model */
+	enum x2apic_state x2apic_state;	/* (i) APIC mode */
+	uint64_t	exitintinfo;	/* (i) events pending at VM exit */
+	int		nmi_pending;	/* (i) NMI pending */
+	int		extint_pending;	/* (i) INTR pending */
+	int	exception_pending;	/* (i) exception pending */
+	int	exc_vector;		/* (x) exception collateral */
+	int	exc_errcode_valid;
 	uint32_t exc_errcode;
-	uint64_t guest_xcr0; /* (i) guest %xcr0 register */
-	void *stats; /* (a,i) statistics */
-	struct vm_exit exitinfo; /* (x) exit reason and collateral */
-	uint64_t nextrip; /* (x) next instruction to execute */
+	struct savefpu	*guestfpu;	/* (a,i) guest fpu state */
+	uint64_t	guest_xcr0;	/* (i) guest %xcr0 register */
+	void		*stats;		/* (a,i) statistics */
+	struct vm_exit	exitinfo;	/* (x) exit reason and collateral */
+	uint64_t	nextrip;	/* (x) next instruction to execute */
 };
 
-#define vcpu_lock_init(v) xpthread_mutex_init(&(v)->lock)
-#define vcpu_lock(v) xpthread_mutex_lock(&(v)->lock)
-#define vcpu_unlock(v) xpthread_mutex_unlock(&(v)->lock)
+#define	vcpu_lock_initialized(v) mtx_initialized(&((v)->mtx))
+#define	vcpu_lock_init(v)	mtx_init(&((v)->mtx), "vcpu lock", 0, MTX_SPIN)
+#define	vcpu_lock(v)		mtx_lock_spin(&((v)->mtx))
+#define	vcpu_unlock(v)		mtx_unlock_spin(&((v)->mtx))
+#define	vcpu_assert_locked(v)	mtx_assert(&((v)->mtx), MA_OWNED)
 
 struct mem_seg {
-	uint64_t gpa;
-	size_t len;
-	void *object;
+	vm_paddr_t	gpa;
+	size_t		len;
+	boolean_t	wired;
+	vm_object_t	object;
 };
-
 #define	VM_MAX_MEMORY_SEGMENTS	2
 
 /*
@@ -109,78 +133,116 @@ struct mem_seg {
  * (x) initialized before use
  */
 struct vm {
-	void *cookie; /* (i) cpu-specific data */
-	struct vhpet *vhpet; /* (i) virtual HPET */
-	struct vioapic *vioapic; /* (i) virtual ioapic */
-	struct vatpic *vatpic; /* (i) virtual atpic */
-	struct vatpit *vatpit; /* (i) virtual atpit */
-	struct vpmtmr *vpmtmr; /* (i) virtual ACPI PM timer */
-	struct vrtc *vrtc; /* (o) virtual RTC */
-	volatile cpuset_t active_cpus; /* (i) active vcpus */
-	int suspend; /* (i) stop VM execution */
-	volatile cpuset_t suspended_cpus; /* (i) suspended vcpus */
-	volatile cpuset_t halted_cpus; /* (x) cpus in a hard halt */
-	cpuset_t rendezvous_req_cpus; /* (x) rendezvous requested */
-	cpuset_t rendezvous_done_cpus; /* (x) rendezvous finished */
-	void *rendezvous_arg; /* (x) rendezvous func/arg */
+	void		*cookie;		/* (i) cpu-specific data */
+	void		*iommu;			/* (x) iommu-specific data */
+	struct vhpet	*vhpet;			/* (i) virtual HPET */
+	struct vioapic	*vioapic;		/* (i) virtual ioapic */
+	struct vatpic	*vatpic;		/* (i) virtual atpic */
+	struct vatpit	*vatpit;		/* (i) virtual atpit */
+	struct vpmtmr	*vpmtmr;		/* (i) virtual ACPI PM timer */
+	struct vrtc	*vrtc;			/* (o) virtual RTC */
+	volatile cpuset_t active_cpus;		/* (i) active vcpus */
+	int		suspend;		/* (i) stop VM execution */
+	volatile cpuset_t suspended_cpus; 	/* (i) suspended vcpus */
+	volatile cpuset_t halted_cpus;		/* (x) cpus in a hard halt */
+	cpuset_t	rendezvous_req_cpus;	/* (x) rendezvous requested */
+	cpuset_t	rendezvous_done_cpus;	/* (x) rendezvous finished */
+	void		*rendezvous_arg;	/* (x) rendezvous func/arg */
 	vm_rendezvous_func_t rendezvous_func;
-	pthread_mutex_t rendezvous_mtx; /* (o) rendezvous lock */
-	pthread_cond_t rendezvous_sleep_cnd;
-	int num_mem_segs; /* (o) guest memory segments */
-	struct mem_seg mem_segs[VM_MAX_MEMORY_SEGMENTS];
-	struct vcpu vcpu[VM_MAXCPU]; /* (i) guest vcpus */
-	volatile u_int hv_is_paused;
-	pthread_mutex_t hv_pause_mtx;
-	pthread_cond_t hv_pause_cnd;
+	struct mtx	rendezvous_mtx;		/* (o) rendezvous lock */
+	int		num_mem_segs;		/* (o) guest memory segments */
+	struct mem_seg	mem_segs[VM_MAX_MEMORY_SEGMENTS];
+	struct vmspace	*vmspace;		/* (o) guest's address space */
+	char		name[VM_MAX_NAMELEN];	/* (o) virtual machine name */
+	struct vcpu	vcpu[VM_MAXCPU];	/* (i) guest vcpus */
 };
-#pragma clang diagnostic pop
 
 static int vmm_initialized;
 
 static struct vmm_ops *ops;
+#define	VMM_INIT(num)	(ops != NULL ? (*ops->init)(num) : 0)
+#define	VMM_CLEANUP()	(ops != NULL ? (*ops->cleanup)() : 0)
+#define	VMM_RESUME()	(ops != NULL ? (*ops->resume)() : 0)
 
-#define	VMM_INIT() \
-	(*ops->init)()
-#define	VMM_CLEANUP() \
-	(*ops->cleanup)()
-#define	VM_INIT(vmi) \
-	(*ops->vm_init)(vmi)
-#define	VCPU_INIT(vmi, vcpu) \
-	(*ops->vcpu_init)(vmi, vcpu)
-#define	VMRUN(vmi, vcpu, rip, rptr, sptr) \
-	(*ops->vmrun)(vmi, vcpu, rip, rptr, sptr)
-#define	VM_CLEANUP(vmi) \
-	(*ops->vm_cleanup)(vmi)
-#define	VCPU_CLEANUP(vmi, vcpu) \
-	(*ops->vcpu_cleanup)(vmi, vcpu)
-#define	VMGETREG(vmi, vcpu, num, retval) \
-	(*ops->vmgetreg)(vmi, vcpu, num, retval)
-#define	VMSETREG(vmi, vcpu, num, val) \
-	(*ops->vmsetreg)(vmi, vcpu, num, val)
-#define	VMGETDESC(vmi, vcpu, num, desc) \
-	(*ops->vmgetdesc)(vmi, vcpu, num, desc)
-#define	VMSETDESC(vmi, vcpu, num, desc) \
-	(*ops->vmsetdesc)(vmi, vcpu, num, desc)
-#define	VMGETCAP(vmi, vcpu, num, retval) \
-	(*ops->vmgetcap)(vmi, vcpu, num, retval)
-#define	VMSETCAP(vmi, vcpu, num, val) \
-	(*ops->vmsetcap)(vmi, vcpu, num, val)
-#define	VLAPIC_INIT(vmi, vcpu) \
-	(*ops->vlapic_init)(vmi, vcpu)
-#define	VLAPIC_CLEANUP(vmi, vlapic) \
-	(*ops->vlapic_cleanup)(vmi, vlapic)
-#define	VCPU_INTERRUPT(vcpu) \
-	(*ops->vcpu_interrupt)(vcpu)
+#define	VMINIT(vm, pmap) (ops != NULL ? (*ops->vminit)(vm, pmap): NULL)
+#define	VMRUN(vmi, vcpu, rip, pmap, evinfo) \
+	(ops != NULL ? (*ops->vmrun)(vmi, vcpu, rip, pmap, evinfo) : ENXIO)
+#define	VMCLEANUP(vmi)	(ops != NULL ? (*ops->vmcleanup)(vmi) : NULL)
+#define	VMSPACE_ALLOC(min, max) \
+	(ops != NULL ? (*ops->vmspace_alloc)(min, max) : NULL)
+#define	VMSPACE_FREE(vmspace) \
+	(ops != NULL ? (*ops->vmspace_free)(vmspace) : ENXIO)
+#define	VMGETREG(vmi, vcpu, num, retval)		\
+	(ops != NULL ? (*ops->vmgetreg)(vmi, vcpu, num, retval) : ENXIO)
+#define	VMSETREG(vmi, vcpu, num, val)		\
+	(ops != NULL ? (*ops->vmsetreg)(vmi, vcpu, num, val) : ENXIO)
+#define	VMGETDESC(vmi, vcpu, num, desc)		\
+	(ops != NULL ? (*ops->vmgetdesc)(vmi, vcpu, num, desc) : ENXIO)
+#define	VMSETDESC(vmi, vcpu, num, desc)		\
+	(ops != NULL ? (*ops->vmsetdesc)(vmi, vcpu, num, desc) : ENXIO)
+#define	VMGETCAP(vmi, vcpu, num, retval)	\
+	(ops != NULL ? (*ops->vmgetcap)(vmi, vcpu, num, retval) : ENXIO)
+#define	VMSETCAP(vmi, vcpu, num, val)		\
+	(ops != NULL ? (*ops->vmsetcap)(vmi, vcpu, num, val) : ENXIO)
+#define	VLAPIC_INIT(vmi, vcpu)			\
+	(ops != NULL ? (*ops->vlapic_init)(vmi, vcpu) : NULL)
+#define	VLAPIC_CLEANUP(vmi, vlapic)		\
+	(ops != NULL ? (*ops->vlapic_cleanup)(vmi, vlapic) : NULL)
+
+#define	fpu_start_emulating()	load_cr0(rcr0() | CR0_TS)
+#define	fpu_stop_emulating()	clts()
+
+static MALLOC_DEFINE(M_VM, "vm", "vm");
 
 /* statistics */
-//static VMM_STAT(VCPU_TOTAL_RUNTIME, "vcpu total runtime");
+static VMM_STAT(VCPU_TOTAL_RUNTIME, "vcpu total runtime");
+
+SYSCTL_NODE(_hw, OID_AUTO, vmm, CTLFLAG_RW, NULL, NULL);
 
 /*
  * Halt the guest if all vcpus are executing a HLT instruction with
  * interrupts disabled.
  */
 static int halt_detection_enabled = 1;
-static int trace_guest_exceptions = 0;
+SYSCTL_INT(_hw_vmm, OID_AUTO, halt_detection, CTLFLAG_RDTUN,
+    &halt_detection_enabled, 0,
+    "Halt VM if all vcpus execute HLT with interrupts disabled");
+
+static int vmm_ipinum;
+SYSCTL_INT(_hw_vmm, OID_AUTO, ipinum, CTLFLAG_RD, &vmm_ipinum, 0,
+    "IPI vector used for vcpu notifications");
+
+static int trace_guest_exceptions;
+SYSCTL_INT(_hw_vmm, OID_AUTO, trace_guest_exceptions, CTLFLAG_RDTUN,
+    &trace_guest_exceptions, 0,
+    "Trap into hypervisor on all guest exceptions and reflect them back");
+
+static int vmm_force_iommu = 0;
+TUNABLE_INT("hw.vmm.force_iommu", &vmm_force_iommu);
+SYSCTL_INT(_hw_vmm, OID_AUTO, force_iommu, CTLFLAG_RDTUN, &vmm_force_iommu, 0,
+    "Force use of I/O MMU even if no passthrough devices were found.");
+
+static void vcpu_notify_event_locked(struct vcpu *vcpu, bool lapic_intr);
+
+#ifdef KTR
+static const char *
+vcpu_state2str(enum vcpu_state state)
+{
+
+	switch (state) {
+	case VCPU_IDLE:
+		return ("idle");
+	case VCPU_FROZEN:
+		return ("frozen");
+	case VCPU_RUNNING:
+		return ("running");
+	case VCPU_SLEEPING:
+		return ("sleeping");
+	default:
+		return ("unknown");
+	}
+}
+#endif
 
 static void
 vcpu_cleanup(struct vm *vm, int i, bool destroy)
@@ -189,7 +251,8 @@ vcpu_cleanup(struct vm *vm, int i, bool destroy)
 
 	VLAPIC_CLEANUP(vm->cookie, vcpu->vlapic);
 	if (destroy) {
-		vmm_stat_free(vcpu->stats);
+		vmm_stat_free(vcpu->stats);	
+		fpu_save_area_free(vcpu->guestfpu);
 	}
 }
 
@@ -200,46 +263,35 @@ vcpu_init(struct vm *vm, int vcpu_id, bool create)
 
 	KASSERT(vcpu_id >= 0 && vcpu_id < VM_MAXCPU,
 	    ("vcpu_init: invalid vcpu %d", vcpu_id));
-
+	  
 	vcpu = &vm->vcpu[vcpu_id];
 
 	if (create) {
+		KASSERT(!vcpu_lock_initialized(vcpu), ("vcpu %d already "
+		    "initialized", vcpu_id));
 		vcpu_lock_init(vcpu);
-		pthread_mutex_init(&vcpu->state_sleep_mtx, NULL);
-		pthread_cond_init(&vcpu->state_sleep_cnd, NULL);
-		pthread_mutex_init(&vcpu->vcpu_sleep_mtx, NULL);
-		pthread_cond_init(&vcpu->vcpu_sleep_cnd, NULL);
 		vcpu->state = VCPU_IDLE;
+		vcpu->hostcpu = NOCPU;
+		vcpu->guestfpu = fpu_save_area_alloc();
 		vcpu->stats = vmm_stat_alloc();
 	}
 
 	vcpu->vlapic = VLAPIC_INIT(vm->cookie, vcpu_id);
 	vm_set_x2apic_state(vm, vcpu_id, X2APIC_DISABLED);
+	vcpu->reqidle = 0;
 	vcpu->exitintinfo = 0;
 	vcpu->nmi_pending = 0;
 	vcpu->extint_pending = 0;
 	vcpu->exception_pending = 0;
 	vcpu->guest_xcr0 = XFEATURE_ENABLED_X87;
+	fpu_save_area_reset(vcpu->guestfpu);
 	vmm_stat_init(vcpu->stats);
 }
 
-int vcpu_create(struct vm *vm, int vcpu) {
-	if (vcpu < 0 || vcpu >= VM_MAXCPU)
-		xhyve_abort("vcpu_create: invalid cpuid %d\n", vcpu);
-
-	return VCPU_INIT(vm->cookie, vcpu);
-}
-
-void vcpu_destroy(struct vm *vm, int vcpu) {
-	if (vcpu < 0 || vcpu >= VM_MAXCPU)
-		xhyve_abort("vcpu_destroy: invalid cpuid %d\n", vcpu);
-
-	VCPU_CLEANUP(vm, vcpu);
-}
-
 int
-vcpu_trace_exceptions(void)
+vcpu_trace_exceptions(struct vm *vm, int vcpuid)
 {
+
 	return (trace_guest_exceptions);
 }
 
@@ -249,95 +301,150 @@ vm_exitinfo(struct vm *vm, int cpuid)
 	struct vcpu *vcpu;
 
 	if (cpuid < 0 || cpuid >= VM_MAXCPU)
-		xhyve_abort("vm_exitinfo: invalid cpuid %d\n", cpuid);
+		panic("vm_exitinfo: invalid cpuid %d", cpuid);
 
 	vcpu = &vm->vcpu[cpuid];
 
 	return (&vcpu->exitinfo);
 }
 
-int
+static void
+vmm_resume(void)
+{
+	VMM_RESUME();
+}
+
+static int
 vmm_init(void)
 {
 	int error;
 
 	vmm_host_state_init();
 
+	vmm_ipinum = lapic_ipi_alloc(&IDTVEC(justreturn));
+	if (vmm_ipinum < 0)
+		vmm_ipinum = IPI_AST;
+
 	error = vmm_mem_init();
 	if (error)
 		return (error);
+	
+	if (vmm_is_intel())
+		ops = &vmm_ops_intel;
+	else if (vmm_is_amd())
+		ops = &vmm_ops_amd;
+	else
+		return (ENXIO);
 
-	ops = &vmm_ops_intel;
+	vmm_resume_p = vmm_resume;
 
-	error = VMM_INIT();
+	return (VMM_INIT(vmm_ipinum));
+}
 
-	if (error == 0)
-		vmm_initialized = 1;
+static int
+vmm_handler(module_t mod, int what, void *arg)
+{
+	int error;
 
+	switch (what) {
+	case MOD_LOAD:
+		vmmdev_init();
+		if (vmm_force_iommu || ppt_avail_devices() > 0)
+			iommu_init();
+		error = vmm_init();
+		if (error == 0)
+			vmm_initialized = 1;
+		break;
+	case MOD_UNLOAD:
+		error = vmmdev_cleanup();
+		if (error == 0) {
+			vmm_resume_p = NULL;
+			iommu_cleanup();
+			if (vmm_ipinum != IPI_AST)
+				lapic_ipi_free(vmm_ipinum);
+			error = VMM_CLEANUP();
+			/*
+			 * Something bad happened - prevent new
+			 * VMs from being created
+			 */
+			if (error)
+				vmm_initialized = 0;
+		}
+		break;
+	default:
+		error = 0;
+		break;
+	}
 	return (error);
 }
 
+static moduledata_t vmm_kmod = {
+	"vmm",
+	vmm_handler,
+	NULL
+};
 
-int
-vmm_cleanup(void) {
-	int error;
-
-	error = VMM_CLEANUP();
-
-	if (error == 0)
-		vmm_initialized = 0;
-
-	return error;
-}
+/*
+ * vmm initialization has the following dependencies:
+ *
+ * - iommu initialization must happen after the pci passthru driver has had
+ *   a chance to attach to any passthru devices (after SI_SUB_CONFIGURE).
+ *
+ * - VT-x initialization requires smp_rendezvous() and therefore must happen
+ *   after SMP is fully functional (after SI_SUB_SMP).
+ */
+DECLARE_MODULE(vmm, vmm_kmod, SI_SUB_SMP + 1, SI_ORDER_ANY);
+MODULE_VERSION(vmm, 1);
 
 static void
 vm_init(struct vm *vm, bool create)
 {
-	int vcpu;
+	int i;
 
-	if (create) {
-		callout_system_init();
-	}
-
-	vm->cookie = VM_INIT(vm);
+	vm->cookie = VMINIT(vm, vmspace_pmap(vm->vmspace));
+	vm->iommu = NULL;
 	vm->vioapic = vioapic_init(vm);
 	vm->vhpet = vhpet_init(vm);
 	vm->vatpic = vatpic_init(vm);
 	vm->vatpit = vatpit_init(vm);
 	vm->vpmtmr = vpmtmr_init(vm);
-
-	if (create) {
+	if (create)
 		vm->vrtc = vrtc_init(vm);
-	}
 
 	CPU_ZERO(&vm->active_cpus);
 
 	vm->suspend = 0;
 	CPU_ZERO(&vm->suspended_cpus);
 
-	for (vcpu = 0; vcpu < VM_MAXCPU; vcpu++) {
-		vcpu_init(vm, vcpu, create);
-	}
+	for (i = 0; i < VM_MAXCPU; i++)
+		vcpu_init(vm, i, create);
 }
 
 int
-vm_create(struct vm **retvm)
+vm_create(const char *name, struct vm **retvm)
 {
 	struct vm *vm;
+	struct vmspace *vmspace;
 
+	/*
+	 * If vmm.ko could not be successfully initialized then don't attempt
+	 * to create the virtual machine.
+	 */
 	if (!vmm_initialized)
 		return (ENXIO);
 
-	vm = malloc(sizeof(struct vm));
-	assert(vm);
-	bzero(vm, sizeof(struct vm));
-	vm->num_mem_segs = 0;
-	pthread_mutex_init(&vm->rendezvous_mtx, NULL);
-	pthread_cond_init(&vm->rendezvous_sleep_cnd, NULL);
+	if (name == NULL || strlen(name) >= VM_MAX_NAMELEN)
+		return (EINVAL);
 
-	vm->hv_is_paused = FALSE;
-	pthread_mutex_init(&vm->hv_pause_mtx, NULL);
-	pthread_cond_init(&vm->hv_pause_cnd, NULL);
+	vmspace = VMSPACE_ALLOC(0, VM_MAXUSER_ADDRESS);
+	if (vmspace == NULL)
+		return (ENOMEM);
+
+	vm = malloc(sizeof(struct vm), M_VM, M_WAITOK | M_ZERO);
+	strcpy(vm->name, name);
+	vm->num_mem_segs = 0;
+	vm->vmspace = vmspace;
+	mtx_init(&vm->rendezvous_mtx, "vm rendezvous lock", 0, MTX_DEF);
 
 	vm_init(vm, true);
 
@@ -346,83 +453,11 @@ vm_create(struct vm **retvm)
 }
 
 static void
-vm_mem_protect(struct vm *vm) {
-	for (int i = 0; i < vm->num_mem_segs; i++) {
-		vmm_mem_protect(vm->mem_segs[i].gpa, vm->mem_segs[i].len);
-	}
-}
-
-static void
-vm_mem_unprotect(struct vm *vm) {
-	for (int i = 0; i < vm->num_mem_segs; i++) {
-		vmm_mem_unprotect(vm->mem_segs[i].gpa, vm->mem_segs[i].len);
-	}
-}
-
-void
-vm_signal_pause(struct vm *vm, bool pause) {
-	pthread_mutex_lock(&vm->hv_pause_mtx); // Lock as we are modifying hv_is_paused
-	if (pause) {
-		if (atomic_cmpset_rel_int(&vm->hv_is_paused, FALSE, TRUE) == 0) { // All vcpus should wait after next interrupt
-			fprintf(stderr, "freeze signal received, but we are already frozen\n");
-		}
-	} else {
-		if (atomic_cmpset_rel_int(&vm->hv_is_paused, TRUE, FALSE) == 0) {
-			fprintf(stderr, "thaw signal received, but we are not frozen\n");
-		} else {
-			pthread_cond_broadcast(&vm->hv_pause_cnd); // wake paused threads
-		}
-	}
-	pthread_mutex_unlock(&vm->hv_pause_mtx);
-}
-
-
-static bool vm_is_paused(struct vm *vm) {
-	return atomic_load_acq_int(&vm->hv_is_paused) == TRUE;
-}
-
-void
-vm_check_for_unpause(struct vm *vm, int vcpuid) {
-	enum vcpu_state state;
-	if (vm_is_paused(vm)) {
-		if (pthread_mutex_lock(&vm->hv_pause_mtx) != 0) {
-			xhyve_abort("error locking mutex");
-		}
-		if (vm_is_paused(vm)) { // Check that we are still paused after acq lock
-			enum vcpu_state orig_state = vm->vcpu[vcpuid].state;
-			state = VCPU_FROZEN;
-			if (vcpu_set_state(vm, vcpuid, state, false) != 0) {
-				xhyve_abort("vcpu_set_state failed\n");
-			}
-			vm_mem_protect(vm);
-
-			// Wait for signal
-			fprintf(stderr, "vcpu %d waiting for signal to resume\n", vcpuid);
-			do {
-				if (pthread_cond_wait(&vm->hv_pause_cnd, &vm->hv_pause_mtx) != 0) {
-					xhyve_abort("pthread_cond_wait failed");
-				}
-			} while (vm_is_paused(vm));
-			fprintf(stderr, "vcpu %d received signal, resuming\n", vcpuid);
-
-			vm_mem_unprotect(vm);
-			state = orig_state;
-			if (vcpu_set_state(vm, vcpuid, state, false) != 0) {
-				xhyve_abort("vcpu_set_state failed\n");
-			}
-		}
-		if (pthread_mutex_unlock(&vm->hv_pause_mtx) != 0) {
-			xhyve_abort("mutex unlock failed");
-		}
-	}
-}
-
-static void
-vm_free_mem_seg(struct mem_seg *seg)
+vm_free_mem_seg(struct vm *vm, struct mem_seg *seg)
 {
-	if (seg->object != NULL) {
-		vmm_mem_free(seg->gpa, seg->len, seg->object);
-	}
+
+	if (seg->object != NULL)
+		vmm_mem_free(vm->vmspace, seg->gpa, seg->len);
 
 	bzero(seg, sizeof(*seg));
 }
@@ -430,31 +465,36 @@ vm_free_mem_seg(struct mem_seg *seg)
 static void
 vm_cleanup(struct vm *vm, bool destroy)
 {
-	int i, vcpu;
+	int i;
 
-	for (vcpu = 0; vcpu < VM_MAXCPU; vcpu++) {
-		vcpu_cleanup(vm, vcpu, destroy);
-	}
+	ppt_unassign_all(vm);
 
-	if (destroy) {
+	if (vm->iommu != NULL)
+		iommu_destroy_domain(vm->iommu);
+
+	if (destroy)
 		vrtc_cleanup(vm->vrtc);
-	} else {
+	else
 		vrtc_reset(vm->vrtc);
-	}
 	vpmtmr_cleanup(vm->vpmtmr);
 	vatpit_cleanup(vm->vatpit);
 	vhpet_cleanup(vm->vhpet);
 	vatpic_cleanup(vm->vatpic);
 	vioapic_cleanup(vm->vioapic);
 
-	VM_CLEANUP(vm->cookie);
+	for (i = 0; i < VM_MAXCPU; i++)
+		vcpu_cleanup(vm, i, destroy);
+
+	VMCLEANUP(vm->cookie);
 
 	if (destroy) {
-		for (i = 0; i < vm->num_mem_segs; i++) {
-			vm_free_mem_seg(&vm->mem_segs[i]);
-		}
+		for (i = 0; i < vm->num_mem_segs; i++)
+			vm_free_mem_seg(vm, &vm->mem_segs[i]);
 
 		vm->num_mem_segs = 0;
+
+		VMSPACE_FREE(vm->vmspace);
+		vm->vmspace = NULL;
 	}
 }
 
@@ -462,7 +502,7 @@ void
 vm_destroy(struct vm *vm)
 {
 	vm_cleanup(vm, true);
-	free(vm);
+	free(vm, M_VM);
 }
 
 int
@@ -485,16 +525,35 @@ vm_reinit(struct vm *vm)
 }
 
 const char *
-vm_name(UNUSED struct vm *vm)
+vm_name(struct vm *vm)
 {
-	return "VM";
+	return (vm->name);
 }
 
-bool
-vm_mem_allocated(struct vm *vm, uint64_t gpa)
+int
+vm_map_mmio(struct vm *vm, vm_paddr_t gpa, size_t len, vm_paddr_t hpa)
+{
+	vm_object_t obj;
+
+	if ((obj = vmm_mmio_alloc(vm->vmspace, gpa, len, hpa)) == NULL)
+		return (ENOMEM);
+	else
+		return (0);
+}
+
+int
+vm_unmap_mmio(struct vm *vm, vm_paddr_t gpa, size_t len)
+{
+
+	vmm_mmio_free(vm->vmspace, gpa, len);
+	return (0);
+}
+
+boolean_t
+vm_mem_allocated(struct vm *vm, vm_paddr_t gpa)
 {
 	int i;
-	uint64_t gpabase, gpalimit;
+	vm_paddr_t gpabase, gpalimit;
 
 	for (i = 0; i < vm->num_mem_segs; i++) {
 		gpabase = vm->mem_segs[i].gpa;
@@ -503,20 +562,23 @@ vm_mem_allocated(struct vm *vm, uint64_t gpa)
 			return (TRUE);		/* 'gpa' is regular memory */
 	}
 
+	if (ppt_is_mmio(vm, gpa))
+		return (TRUE);			/* 'gpa' is pci passthru mmio */
+
 	return (FALSE);
 }
 
 int
-vm_malloc(struct vm *vm, uint64_t gpa, size_t len)
+vm_malloc(struct vm *vm, vm_paddr_t gpa, size_t len)
 {
 	int available, allocated;
 	struct mem_seg *seg;
-	void *object;
-	uint64_t g;
+	vm_object_t object;
+	vm_paddr_t g;
 
-	if ((gpa & XHYVE_PAGE_MASK) || (len & XHYVE_PAGE_MASK) || len == 0)
+	if ((gpa & PAGE_MASK) || (len & PAGE_MASK) || len == 0)
 		return (EINVAL);
-
+	
 	available = allocated = 0;
 	g = gpa;
 	while (g < gpa + len) {
@@ -525,7 +587,7 @@ vm_malloc(struct vm *vm, uint64_t gpa, size_t len)
 		else
 			available++;
 
-		g += XHYVE_PAGE_SIZE;
+		g += PAGE_SIZE;
 	}
 
 	/*
@@ -547,32 +609,220 @@ vm_malloc(struct vm *vm, uint64_t gpa, size_t len)
 
 	seg = &vm->mem_segs[vm->num_mem_segs];
 
-	if ((object = vmm_mem_alloc(gpa, len)) == NULL)
+	if ((object = vmm_mem_alloc(vm->vmspace, gpa, len)) == NULL)
 		return (ENOMEM);
 
 	seg->gpa = gpa;
 	seg->len = len;
 	seg->object = object;
+	seg->wired = FALSE;
 
 	vm->num_mem_segs++;
 
 	return (0);
 }
 
-void *
-vm_gpa2hva(struct vm *vm, uint64_t gpa, uint64_t len) {
-	void *base;
-	uint64_t offset;
+static vm_paddr_t
+vm_maxmem(struct vm *vm)
+{
+	int i;
+	vm_paddr_t gpa, maxmem;
 
-	if (vm_get_memobj(vm, gpa, len, &offset, &base)) {
-		return NULL;
+	maxmem = 0;
+	for (i = 0; i < vm->num_mem_segs; i++) {
+		gpa = vm->mem_segs[i].gpa + vm->mem_segs[i].len;
+		if (gpa > maxmem)
+			maxmem = gpa;
+	}
+	return (maxmem);
+}
+
+static void
+vm_gpa_unwire(struct vm *vm)
+{
+	int i, rv;
+	struct mem_seg *seg;
+
+	for (i = 0; i < vm->num_mem_segs; i++) {
+		seg = &vm->mem_segs[i];
+		if (!seg->wired)
+			continue;
+
+		rv = vm_map_unwire(&vm->vmspace->vm_map,
+				   seg->gpa, seg->gpa + seg->len,
+				   VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
+		KASSERT(rv == KERN_SUCCESS, ("vm(%s) memory segment "
+		    "%#lx/%ld could not be unwired: %d",
+		    vm_name(vm), seg->gpa, seg->len, rv));
+
+		seg->wired = FALSE;
+	}
+}
+
+static int
+vm_gpa_wire(struct vm *vm)
+{
+	int i, rv;
+	struct mem_seg *seg;
+
+	for (i = 0; i < vm->num_mem_segs; i++) {
+		seg = &vm->mem_segs[i];
+		if (seg->wired)
+			continue;
+
+		/* XXX rlimits? */
+		rv = vm_map_wire(&vm->vmspace->vm_map,
+				 seg->gpa, seg->gpa + seg->len,
+				 VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
+		if (rv != KERN_SUCCESS)
+			break;
+
+		seg->wired = TRUE;
 	}
 
-	return (void *) (((uintptr_t) base) + offset);
+	if (i < vm->num_mem_segs) {
+		/*
+		 * Undo the wiring before returning an error.
+		 */
+		vm_gpa_unwire(vm);
+		return (EAGAIN);
+	}
+
+	return (0);
+}
+
+static void
+vm_iommu_modify(struct vm *vm, boolean_t map)
+{
+	int i, sz;
+	vm_paddr_t gpa, hpa;
+	struct mem_seg *seg;
+	void *vp, *cookie, *host_domain;
+
+	sz = PAGE_SIZE;
+	host_domain = iommu_host_domain();
+
+	for (i = 0; i < vm->num_mem_segs; i++) {
+		seg = &vm->mem_segs[i];
+		KASSERT(seg->wired, ("vm(%s) memory segment %#lx/%ld not wired",
+		    vm_name(vm), seg->gpa, seg->len));
+
+		gpa = seg->gpa;
+		while (gpa < seg->gpa + seg->len) {
+			vp = vm_gpa_hold(vm, gpa, PAGE_SIZE, VM_PROT_WRITE,
+					 &cookie);
+			KASSERT(vp != NULL, ("vm(%s) could not map gpa %#lx",
+			    vm_name(vm), gpa));
+
+			vm_gpa_release(cookie);
+
+			hpa = DMAP_TO_PHYS((uintptr_t)vp);
+			if (map) {
+				iommu_create_mapping(vm->iommu, gpa, hpa, sz);
+				iommu_remove_mapping(host_domain, hpa, sz);
+			} else {
+				iommu_remove_mapping(vm->iommu, gpa, sz);
+				iommu_create_mapping(host_domain, hpa, hpa, sz);
+			}
+
+			gpa += PAGE_SIZE;
+		}
+	}
+
+	/*
+	 * Invalidate the cached translations associated with the domain
+	 * from which pages were removed.
+	 */
+	if (map)
+		iommu_invalidate_tlb(host_domain);
+	else
+		iommu_invalidate_tlb(vm->iommu);
+}
+
+#define	vm_iommu_unmap(vm)	vm_iommu_modify((vm), FALSE)
+#define	vm_iommu_map(vm)	vm_iommu_modify((vm), TRUE)
+
+int
+vm_unassign_pptdev(struct vm *vm, int bus, int slot, int func)
+{
+	int error;
+
+	error = ppt_unassign_device(vm, bus, slot, func);
+	if (error)
+		return (error);
+
+	if (ppt_assigned_devices(vm) == 0) {
+		vm_iommu_unmap(vm);
+		vm_gpa_unwire(vm);
+	}
+	return (0);
 }
 
 int
-vm_gpabase2memseg(struct vm *vm, uint64_t gpabase,
+vm_assign_pptdev(struct vm *vm, int bus, int slot, int func)
+{
+	int error;
+	vm_paddr_t maxaddr;
+
+	/*
+	 * Virtual machines with pci passthru devices get special treatment:
+	 * - the guest physical memory is wired
+	 * - the iommu is programmed to do the 'gpa' to 'hpa' translation
+	 *
+	 * We need to do this before the first pci passthru device is attached.
+	 */
+	if (ppt_assigned_devices(vm) == 0) {
+		KASSERT(vm->iommu == NULL,
+		    ("vm_assign_pptdev: iommu must be NULL"));
+		maxaddr = vm_maxmem(vm);
+		vm->iommu = iommu_create_domain(maxaddr);
+
+		error = vm_gpa_wire(vm);
+		if (error)
+			return (error);
+
+		vm_iommu_map(vm);
+	}
+
+	error = ppt_assign_device(vm, bus, slot, func);
+	return (error);
+}
+
+void *
+vm_gpa_hold(struct vm *vm, vm_paddr_t gpa, size_t len, int reqprot,
+	    void **cookie)
+{
+	int count, pageoff;
+	vm_page_t m;
+
+	pageoff = gpa & PAGE_MASK;
+	if (len > PAGE_SIZE - pageoff)
+		panic("vm_gpa_hold: invalid gpa/len: 0x%016lx/%lu", gpa, len);
+
+	count = vm_fault_quick_hold_pages(&vm->vmspace->vm_map,
+	    trunc_page(gpa), PAGE_SIZE, reqprot, &m, 1);
+
+	if (count == 1) {
+		*cookie = m;
+		return ((void *)(PHYS_TO_DMAP(VM_PAGE_TO_PHYS(m)) + pageoff));
+	} else {
+		*cookie = NULL;
+		return (NULL);
+	}
+}
+
+void
+vm_gpa_release(void *cookie)
+{
+	vm_page_t m = cookie;
+
+	vm_page_lock(m);
+	vm_page_unhold(m);
+	vm_page_unlock(m);
+}
+
+int
+vm_gpabase2memseg(struct vm *vm, vm_paddr_t gpabase,
 		  struct vm_memory_segment *seg)
 {
 	int i;
@@ -581,6 +831,7 @@ vm_gpabase2memseg(struct vm *vm, uint64_t gpabase,
 		if (gpabase == vm->mem_segs[i].gpa) {
 			seg->gpa = vm->mem_segs[i].gpa;
 			seg->len = vm->mem_segs[i].len;
+			seg->wired = vm->mem_segs[i].wired;
 			return (0);
 		}
 	}
@@ -588,13 +839,13 @@ vm_gpabase2memseg(struct vm *vm, uint64_t gpabase,
 }
 
 int
-vm_get_memobj(struct vm *vm, uint64_t gpa, size_t len,
-	      uint64_t *offset, void **object)
+vm_get_memobj(struct vm *vm, vm_paddr_t gpa, size_t len,
+	      vm_offset_t *offset, struct vm_object **object)
 {
 	int i;
 	size_t seg_len;
-	uint64_t seg_gpa;
-	void *seg_obj;
+	vm_paddr_t seg_gpa;
+	vm_object_t seg_obj;
 
 	for (i = 0; i < vm->num_mem_segs; i++) {
 		if ((seg_obj = vm->mem_segs[i].object) == NULL)
@@ -603,9 +854,10 @@ vm_get_memobj(struct vm *vm, uint64_t gpa, size_t len,
 		seg_gpa = vm->mem_segs[i].gpa;
 		seg_len = vm->mem_segs[i].len;
 
-		if ((gpa >= seg_gpa) && ((gpa + len) <= (seg_gpa + seg_len))) {
+		if (gpa >= seg_gpa && gpa < seg_gpa + seg_len) {
 			*offset = gpa - seg_gpa;
 			*object = seg_obj;
+			vm_object_reference(seg_obj);
 			return (0);
 		}
 	}
@@ -643,15 +895,16 @@ vm_set_register(struct vm *vm, int vcpuid, int reg, uint64_t val)
 		return (error);
 
 	/* Set 'nextrip' to match the value of %rip */
-	VCPU_CTR1(vm, vcpuid, "Setting nextrip to %#llx", val);
+	VCPU_CTR1(vm, vcpuid, "Setting nextrip to %#lx", val);
 	vcpu = &vm->vcpu[vcpuid];
 	vcpu->nextrip = val;
 	return (0);
 }
 
-static bool
+static boolean_t
 is_descriptor_table(int reg)
 {
+
 	switch (reg) {
 	case VM_REG_GUEST_IDTR:
 	case VM_REG_GUEST_GDTR:
@@ -661,9 +914,10 @@ is_descriptor_table(int reg)
 	}
 }
 
-static bool
+static boolean_t
 is_segment_register(int reg)
 {
+	
 	switch (reg) {
 	case VM_REG_GUEST_ES:
 	case VM_REG_GUEST_CS:
@@ -683,6 +937,7 @@ int
 vm_get_seg_desc(struct vm *vm, int vcpu, int reg,
 		struct seg_desc *desc)
 {
+
 	if (vcpu < 0 || vcpu >= VM_MAXCPU)
 		return (EINVAL);
 
@@ -705,14 +960,58 @@ vm_set_seg_desc(struct vm *vm, int vcpu, int reg,
 	return (VMSETDESC(vm->cookie, vcpu, reg, desc));
 }
 
-// static VMM_STAT(VCPU_IDLE_TICKS, "number of ticks vcpu was idle");
+static void
+restore_guest_fpustate(struct vcpu *vcpu)
+{
+
+	/* flush host state to the pcb */
+	fpuexit(curthread);
+
+	/* restore guest FPU state */
+	fpu_stop_emulating();
+	fpurestore(vcpu->guestfpu);
+
+	/* restore guest XCR0 if XSAVE is enabled in the host */
+	if (rcr4() & CR4_XSAVE)
+		load_xcr(0, vcpu->guest_xcr0);
+
+	/*
+	 * The FPU is now "dirty" with the guest's state so turn on emulation
+	 * to trap any access to the FPU by the host.
+	 */
+	fpu_start_emulating();
+}
+
+static void
+save_guest_fpustate(struct vcpu *vcpu)
+{
+
+	if ((rcr0() & CR0_TS) == 0)
+		panic("fpu emulation not enabled in host!");
+
+	/* save guest XCR0 and restore host XCR0 */
+	if (rcr4() & CR4_XSAVE) {
+		vcpu->guest_xcr0 = rxcr(0);
+		load_xcr(0, vmm_get_host_xcr0());
+	}
+
+	/* save guest FPU state */
+	fpu_stop_emulating();
+	fpusave(vcpu->guestfpu);
+	fpu_start_emulating();
+}
+
+static VMM_STAT(VCPU_IDLE_TICKS, "number of ticks vcpu was idle");
 
 static int
-vcpu_set_state_locked(struct vcpu *vcpu, enum vcpu_state newstate,
+vcpu_set_state_locked(struct vm *vm, int vcpuid, enum vcpu_state newstate,
     bool from_idle)
 {
+	struct vcpu *vcpu;
 	int error;
-	const struct timespec ts = {.tv_sec = 1, .tv_nsec = 0}; /* 1 second */
+
+	vcpu = &vm->vcpu[vcpuid];
+	vcpu_assert_locked(vcpu);
 
 	/*
 	 * State transitions from the vmmdev_ioctl() must always begin from
@@ -721,17 +1020,23 @@ vcpu_set_state_locked(struct vcpu *vcpu, enum vcpu_state newstate,
 	 */
 	if (from_idle) {
 		while (vcpu->state != VCPU_IDLE) {
-			pthread_mutex_lock(&vcpu->state_sleep_mtx);
-			vcpu_unlock(vcpu);
-			pthread_cond_timedwait_relative_np(&vcpu->state_sleep_cnd,
-				&vcpu->state_sleep_mtx, &ts);
-			vcpu_lock(vcpu);
-			pthread_mutex_unlock(&vcpu->state_sleep_mtx);
-			//msleep_spin(&vcpu->state, &vcpu->mtx, "vmstat", hz);
+			vcpu->reqidle = 1;
+			vcpu_notify_event_locked(vcpu, false);
+			VCPU_CTR1(vm, vcpuid, "vcpu state change from %s to "
+			    "idle requested", vcpu_state2str(vcpu->state));
+			msleep_spin(&vcpu->state, &vcpu->mtx, "vmstat", hz);
 		}
 	} else {
 		KASSERT(vcpu->state != VCPU_IDLE, ("invalid transition from "
 		    "vcpu idle state"));
+	}
+
+	if (vcpu->state == VCPU_RUNNING) {
+		KASSERT(vcpu->hostcpu == curcpu, ("curcpu %d and hostcpu %d "
+		    "mismatch for running vcpu", curcpu, vcpu->hostcpu));
+	} else {
+		KASSERT(vcpu->hostcpu == NOCPU, ("Invalid hostcpu %d for a "
+		    "vcpu that is not running", vcpu->hostcpu));
 	}
 
 	/*
@@ -749,16 +1054,25 @@ vcpu_set_state_locked(struct vcpu *vcpu, enum vcpu_state newstate,
 	case VCPU_FROZEN:
 		error = (newstate == VCPU_FROZEN);
 		break;
+	default:
+		error = 1;
+		break;
 	}
 
 	if (error)
 		return (EBUSY);
 
+	VCPU_CTR2(vm, vcpuid, "vcpu state changed from %s to %s",
+	    vcpu_state2str(vcpu->state), vcpu_state2str(newstate));
+
 	vcpu->state = newstate;
+	if (newstate == VCPU_RUNNING)
+		vcpu->hostcpu = curcpu;
+	else
+		vcpu->hostcpu = NOCPU;
 
 	if (newstate == VCPU_IDLE)
-		pthread_cond_broadcast(&vcpu->state_sleep_cnd);
-		//wakeup(&vcpu->state);
+		wakeup(&vcpu->state);
 
 	return (0);
 }
@@ -769,21 +1083,24 @@ vcpu_require_state(struct vm *vm, int vcpuid, enum vcpu_state newstate)
 	int error;
 
 	if ((error = vcpu_set_state(vm, vcpuid, newstate, false)) != 0)
-		xhyve_abort("Error %d setting state to %d\n", error, newstate);
+		panic("Error %d setting state to %d\n", error, newstate);
 }
 
 static void
-vcpu_require_state_locked(struct vcpu *vcpu, enum vcpu_state newstate)
+vcpu_require_state_locked(struct vm *vm, int vcpuid, enum vcpu_state newstate)
 {
 	int error;
 
-	if ((error = vcpu_set_state_locked(vcpu, newstate, false)) != 0)
-		xhyve_abort("Error %d setting state to %d", error, newstate);
+	if ((error = vcpu_set_state_locked(vm, vcpuid, newstate, false)) != 0)
+		panic("Error %d setting state to %d", error, newstate);
 }
 
 static void
 vm_set_rendezvous_func(struct vm *vm, vm_rendezvous_func_t func)
 {
+
+	KASSERT(mtx_owned(&vm->rendezvous_mtx), ("rendezvous_mtx not locked"));
+
 	/*
 	 * Update 'rendezvous_func' and execute a write memory barrier to
 	 * ensure that it is visible across all host cpus. This is not needed
@@ -794,13 +1111,12 @@ vm_set_rendezvous_func(struct vm *vm, vm_rendezvous_func_t func)
 	wmb();
 }
 
-#define	RENDEZVOUS_CTR0(vm, vcpuid, fmt) \
-	do { \
-		if (vcpuid >= 0) {\
-			VCPU_CTR0(vm, vcpuid, fmt); \
-		} else {\
-			VM_CTR0(vm, fmt); \
-		} \
+#define	RENDEZVOUS_CTR0(vm, vcpuid, fmt)				\
+	do {								\
+		if (vcpuid >= 0)					\
+			VCPU_CTR0(vm, vcpuid, fmt);			\
+		else							\
+			VM_CTR0(vm, fmt);				\
 	} while (0)
 
 static void
@@ -810,46 +1126,43 @@ vm_handle_rendezvous(struct vm *vm, int vcpuid)
 	KASSERT(vcpuid == -1 || (vcpuid >= 0 && vcpuid < VM_MAXCPU),
 	    ("vm_handle_rendezvous: invalid vcpuid %d", vcpuid));
 
-	pthread_mutex_lock(&vm->rendezvous_mtx);
+	mtx_lock(&vm->rendezvous_mtx);
 	while (vm->rendezvous_func != NULL) {
 		/* 'rendezvous_req_cpus' must be a subset of 'active_cpus' */
 		CPU_AND(&vm->rendezvous_req_cpus, &vm->active_cpus);
 
 		if (vcpuid != -1 &&
-		    CPU_ISSET(((unsigned) vcpuid), &vm->rendezvous_req_cpus) &&
-		    !CPU_ISSET(((unsigned) vcpuid), &vm->rendezvous_done_cpus)) {
+		    CPU_ISSET(vcpuid, &vm->rendezvous_req_cpus) &&
+		    !CPU_ISSET(vcpuid, &vm->rendezvous_done_cpus)) {
 			VCPU_CTR0(vm, vcpuid, "Calling rendezvous func");
 			(*vm->rendezvous_func)(vm, vcpuid, vm->rendezvous_arg);
-			CPU_SET(((unsigned) vcpuid), &vm->rendezvous_done_cpus);
+			CPU_SET(vcpuid, &vm->rendezvous_done_cpus);
 		}
 		if (CPU_CMP(&vm->rendezvous_req_cpus,
 		    &vm->rendezvous_done_cpus) == 0) {
 			VCPU_CTR0(vm, vcpuid, "Rendezvous completed");
 			vm_set_rendezvous_func(vm, NULL);
-			pthread_cond_broadcast(&vm->rendezvous_sleep_cnd);
-			//wakeup(&vm->rendezvous_func);
+			wakeup(&vm->rendezvous_func);
 			break;
 		}
 		RENDEZVOUS_CTR0(vm, vcpuid, "Wait for rendezvous completion");
-		pthread_cond_wait(&vm->rendezvous_sleep_cnd, &vm->rendezvous_mtx);
-		//mtx_sleep(&vm->rendezvous_func, &vm->rendezvous_mtx, 0, "vmrndv", 0);
+		mtx_sleep(&vm->rendezvous_func, &vm->rendezvous_mtx, 0,
+		    "vmrndv", 0);
 	}
-	pthread_mutex_unlock(&vm->rendezvous_mtx);
+	mtx_unlock(&vm->rendezvous_mtx);
 }
 
 /*
  * Emulate a guest 'hlt' by sleeping until the vcpu is ready to run.
  */
 static int
-vm_handle_hlt(struct vm *vm, int vcpuid, bool intr_disabled)
+vm_handle_hlt(struct vm *vm, int vcpuid, bool intr_disabled, bool *retu)
 {
 	struct vcpu *vcpu;
 	const char *wmesg;
-	int vcpu_halted, vm_halted;
-	const struct timespec ts = {.tv_sec = 1, .tv_nsec = 0}; /* 1 second */
+	int t, vcpu_halted, vm_halted;
 
-	KASSERT(!CPU_ISSET(((unsigned) vcpuid), &vm->halted_cpus),
-		("vcpu already halted"));
+	KASSERT(!CPU_ISSET(vcpuid, &vm->halted_cpus), ("vcpu already halted"));
 
 	vcpu = &vm->vcpu[vcpuid];
 	vcpu_halted = 0;
@@ -866,7 +1179,7 @@ vm_handle_hlt(struct vm *vm, int vcpuid, bool intr_disabled)
 		 * vcpu returned from VMRUN() and before it acquired the
 		 * vcpu lock above.
 		 */
-		if (vm->rendezvous_func != NULL || vm->suspend)
+		if (vm->rendezvous_func != NULL || vm->suspend || vcpu->reqidle)
 			break;
 		if (vm_nmi_pending(vm, vcpuid))
 			break;
@@ -876,6 +1189,10 @@ vm_handle_hlt(struct vm *vm, int vcpuid, bool intr_disabled)
 				break;
 			}
 		}
+
+		/* Don't go to sleep if the vcpu thread needs to yield */
+		if (vcpu_should_yield(vm, vcpuid))
+			break;
 
 		/*
 		 * Some Linux guests implement "halt" by having all vcpus
@@ -888,7 +1205,7 @@ vm_handle_hlt(struct vm *vm, int vcpuid, bool intr_disabled)
 			VCPU_CTR0(vm, vcpuid, "Halted");
 			if (!vcpu_halted && halt_detection_enabled) {
 				vcpu_halted = 1;
-				CPU_SET_ATOMIC(((unsigned) vcpuid), &vm->halted_cpus);
+				CPU_SET_ATOMIC(vcpuid, &vm->halted_cpus);
 			}
 			if (CPU_CMP(&vm->halted_cpus, &vm->active_cpus) == 0) {
 				vm_halted = 1;
@@ -898,31 +1215,67 @@ vm_handle_hlt(struct vm *vm, int vcpuid, bool intr_disabled)
 			wmesg = "vmidle";
 		}
 
-		//t = ticks;
-		vcpu_require_state_locked(vcpu, VCPU_SLEEPING);
+		t = ticks;
+		vcpu_require_state_locked(vm, vcpuid, VCPU_SLEEPING);
 		/*
 		 * XXX msleep_spin() cannot be interrupted by signals so
 		 * wake up periodically to check pending signals.
 		 */
-		pthread_mutex_lock(&vcpu->vcpu_sleep_mtx);
-		vcpu_unlock(vcpu);
-		pthread_cond_timedwait_relative_np(&vcpu->vcpu_sleep_cnd,
-			&vcpu->vcpu_sleep_mtx, &ts);
-		vcpu_lock(vcpu);
-		pthread_mutex_unlock(&vcpu->vcpu_sleep_mtx);
-		//msleep_spin(vcpu, &vcpu->mtx, wmesg, hz);
-		vcpu_require_state_locked(vcpu, VCPU_FROZEN);
-		//vmm_stat_incr(vm, vcpuid, VCPU_IDLE_TICKS, ticks - t);
+		msleep_spin(vcpu, &vcpu->mtx, wmesg, hz);
+		vcpu_require_state_locked(vm, vcpuid, VCPU_FROZEN);
+		vmm_stat_incr(vm, vcpuid, VCPU_IDLE_TICKS, ticks - t);
 	}
 
 	if (vcpu_halted)
-		CPU_CLR_ATOMIC(((unsigned) vcpuid), &vm->halted_cpus);
+		CPU_CLR_ATOMIC(vcpuid, &vm->halted_cpus);
 
 	vcpu_unlock(vcpu);
 
 	if (vm_halted)
 		vm_suspend(vm, VM_SUSPEND_HALT);
 
+	return (0);
+}
+
+static int
+vm_handle_paging(struct vm *vm, int vcpuid, bool *retu)
+{
+	int rv, ftype;
+	struct vm_map *map;
+	struct vcpu *vcpu;
+	struct vm_exit *vme;
+
+	vcpu = &vm->vcpu[vcpuid];
+	vme = &vcpu->exitinfo;
+
+	KASSERT(vme->inst_length == 0, ("%s: invalid inst_length %d",
+	    __func__, vme->inst_length));
+
+	ftype = vme->u.paging.fault_type;
+	KASSERT(ftype == VM_PROT_READ ||
+	    ftype == VM_PROT_WRITE || ftype == VM_PROT_EXECUTE,
+	    ("vm_handle_paging: invalid fault_type %d", ftype));
+
+	if (ftype == VM_PROT_READ || ftype == VM_PROT_WRITE) {
+		rv = pmap_emulate_accessed_dirty(vmspace_pmap(vm->vmspace),
+		    vme->u.paging.gpa, ftype);
+		if (rv == 0) {
+			VCPU_CTR2(vm, vcpuid, "%s bit emulation for gpa %#lx",
+			    ftype == VM_PROT_READ ? "accessed" : "dirty",
+			    vme->u.paging.gpa);
+			goto done;
+		}
+	}
+
+	map = &vm->vmspace->vm_map;
+	rv = vm_fault(map, vme->u.paging.gpa, ftype, VM_FAULT_NORMAL);
+
+	VCPU_CTR3(vm, vcpuid, "vm_handle_paging rv = %d, gpa = %#lx, "
+	    "ftype = %d", rv, vme->u.paging.gpa, ftype);
+
+	if (rv != KERN_SUCCESS)
+		return (EFAULT);
+done:
 	return (0);
 }
 
@@ -937,10 +1290,13 @@ vm_handle_inst_emul(struct vm *vm, int vcpuid, bool *retu)
 	mem_region_read_t mread;
 	mem_region_write_t mwrite;
 	enum vm_cpu_mode cpu_mode;
-	int cs_d, error, fault, length;
+	int cs_d, error, fault;
 
 	vcpu = &vm->vcpu[vcpuid];
 	vme = &vcpu->exitinfo;
+
+	KASSERT(vme->inst_length == 0, ("%s: invalid inst_length %d",
+	    __func__, vme->inst_length));
 
 	gla = vme->u.inst_emul.gla;
 	gpa = vme->u.inst_emul.gpa;
@@ -950,17 +1306,12 @@ vm_handle_inst_emul(struct vm *vm, int vcpuid, bool *retu)
 	paging = &vme->u.inst_emul.paging;
 	cpu_mode = paging->cpu_mode;
 
-	VCPU_CTR1(vm, vcpuid, "inst_emul fault accessing gpa %#llx", gpa);
+	VCPU_CTR1(vm, vcpuid, "inst_emul fault accessing gpa %#lx", gpa);
 
 	/* Fetch, decode and emulate the faulting instruction */
 	if (vie->num_valid == 0) {
-		/*
-		 * If the instruction length is not known then assume a
-		 * maximum size instruction.
-		 */
-		length = vme->inst_length ? vme->inst_length : VIE_INST_SIZE;
 		error = vmm_fetch_instruction(vm, vcpuid, paging, vme->rip +
-		    cs_base, length, vie, &fault);
+		    cs_base, VIE_INST_SIZE, vie, &fault);
 	} else {
 		/*
 		 * The instruction bytes have already been copied into 'vie'
@@ -971,23 +1322,22 @@ vm_handle_inst_emul(struct vm *vm, int vcpuid, bool *retu)
 		return (error);
 
 	if (vmm_decode_instruction(vm, vcpuid, gla, cpu_mode, cs_d, vie) != 0) {
-		VCPU_CTR1(vm, vcpuid, "Error decoding instruction at %#llx",
+		VCPU_CTR1(vm, vcpuid, "Error decoding instruction at %#lx",
 		    vme->rip + cs_base);
 		*retu = true;	    /* dump instruction bytes in userspace */
 		return (0);
 	}
 
 	/*
-	 * If the instruction length was not specified then update it now
-	 * along with 'nextrip'.
+	 * Update 'nextrip' based on the length of the emulated instruction.
 	 */
-	if (vme->inst_length == 0) {
-		vme->inst_length = vie->num_processed;
-		vcpu->nextrip += vie->num_processed;
-	}
-
+	vme->inst_length = vie->num_processed;
+	vcpu->nextrip += vie->num_processed;
+	VCPU_CTR1(vm, vcpuid, "nextrip updated to %#lx after instruction "
+	    "decoding", vcpu->nextrip);
+ 
 	/* return to userland unless this is an in-kernel emulated device */
-	if (gpa >= DEFAULT_APIC_BASE && gpa < DEFAULT_APIC_BASE + XHYVE_PAGE_SIZE) {
+	if (gpa >= DEFAULT_APIC_BASE && gpa < DEFAULT_APIC_BASE + PAGE_SIZE) {
 		mread = lapic_mmio_read;
 		mwrite = lapic_mmio_write;
 	} else if (gpa >= VIOAPIC_BASE && gpa < VIOAPIC_BASE + VIOAPIC_SIZE) {
@@ -1012,12 +1362,11 @@ vm_handle_suspend(struct vm *vm, int vcpuid, bool *retu)
 {
 	int i, done;
 	struct vcpu *vcpu;
-	const struct timespec ts = {.tv_sec = 1, .tv_nsec = 0}; /* 1 second */
 
 	done = 0;
 	vcpu = &vm->vcpu[vcpuid];
 
-	CPU_SET_ATOMIC(((unsigned) vcpuid), &vm->suspended_cpus);
+	CPU_SET_ATOMIC(vcpuid, &vm->suspended_cpus);
 
 	/*
 	 * Wait until all 'active_cpus' have suspended themselves.
@@ -1035,17 +1384,9 @@ vm_handle_suspend(struct vm *vm, int vcpuid, bool *retu)
 
 		if (vm->rendezvous_func == NULL) {
 			VCPU_CTR0(vm, vcpuid, "Sleeping during suspend");
-			vcpu_require_state_locked(vcpu, VCPU_SLEEPING);
-
-			pthread_mutex_lock(&vcpu->vcpu_sleep_mtx);
-			vcpu_unlock(vcpu);
-			pthread_cond_timedwait_relative_np(&vcpu->vcpu_sleep_cnd,
-				&vcpu->vcpu_sleep_mtx, &ts);
-			vcpu_lock(vcpu);
-			pthread_mutex_unlock(&vcpu->vcpu_sleep_mtx);
-			//msleep_spin(vcpu, &vcpu->mtx, "vmsusp", hz);
-
-			vcpu_require_state_locked(vcpu, VCPU_FROZEN);
+			vcpu_require_state_locked(vm, vcpuid, VCPU_SLEEPING);
+			msleep_spin(vcpu, &vcpu->mtx, "vmsusp", hz);
+			vcpu_require_state_locked(vm, vcpuid, VCPU_FROZEN);
 		} else {
 			VCPU_CTR0(vm, vcpuid, "Rendezvous during suspend");
 			vcpu_unlock(vcpu);
@@ -1059,11 +1400,24 @@ vm_handle_suspend(struct vm *vm, int vcpuid, bool *retu)
 	 * Wakeup the other sleeping vcpus and return to userspace.
 	 */
 	for (i = 0; i < VM_MAXCPU; i++) {
-		if (CPU_ISSET(((unsigned) i), &vm->suspended_cpus)) {
+		if (CPU_ISSET(i, &vm->suspended_cpus)) {
 			vcpu_notify_event(vm, i, false);
 		}
 	}
 
+	*retu = true;
+	return (0);
+}
+
+static int
+vm_handle_reqidle(struct vm *vm, int vcpuid, bool *retu)
+{
+	struct vcpu *vcpu = &vm->vcpu[vcpuid];
+
+	vcpu_lock(vcpu);
+	KASSERT(vcpu->reqidle, ("invalid vcpu reqidle %d", vcpu->reqidle));
+	vcpu->reqidle = 0;
+	vcpu_unlock(vcpu);
 	*retu = true;
 	return (0);
 }
@@ -1076,7 +1430,7 @@ vm_suspend(struct vm *vm, enum vm_suspend_how how)
 	if (how <= VM_SUSPEND_NONE || how >= VM_SUSPEND_LAST)
 		return (EINVAL);
 
-	if (atomic_cmpset_int(((volatile u_int *) &vm->suspend), 0, how) == 0) {
+	if (atomic_cmpset_int(&vm->suspend, 0, how) == 0) {
 		VM_CTR2(vm, "virtual machine already suspended %d/%d",
 		    vm->suspend, how);
 		return (EALREADY);
@@ -1088,7 +1442,7 @@ vm_suspend(struct vm *vm, enum vm_suspend_how how)
 	 * Notify all active vcpus that they are now suspended.
 	 */
 	for (i = 0; i < VM_MAXCPU; i++) {
-		if (CPU_ISSET(((unsigned) i), &vm->active_cpus))
+		if (CPU_ISSET(i, &vm->active_cpus))
 			vcpu_notify_event(vm, i, false);
 	}
 
@@ -1107,7 +1461,7 @@ vm_exit_suspended(struct vm *vm, int vcpuid, uint64_t rip)
 	vmexit->rip = rip;
 	vmexit->inst_length = 0;
 	vmexit->exitcode = VM_EXITCODE_SUSPENDED;
-	vmexit->u.suspended.how = (enum vm_suspend_how) vm->suspend;
+	vmexit->u.suspended.how = vm->suspend;
 }
 
 void
@@ -1124,47 +1478,89 @@ vm_exit_rendezvous(struct vm *vm, int vcpuid, uint64_t rip)
 	vmm_stat_incr(vm, vcpuid, VMEXIT_RENDEZVOUS, 1);
 }
 
-void pittest(struct vm *thevm);
+void
+vm_exit_reqidle(struct vm *vm, int vcpuid, uint64_t rip)
+{
+	struct vm_exit *vmexit;
+
+	vmexit = vm_exitinfo(vm, vcpuid);
+	vmexit->rip = rip;
+	vmexit->inst_length = 0;
+	vmexit->exitcode = VM_EXITCODE_REQIDLE;
+	vmm_stat_incr(vm, vcpuid, VMEXIT_REQIDLE, 1);
+}
+
+void
+vm_exit_astpending(struct vm *vm, int vcpuid, uint64_t rip)
+{
+	struct vm_exit *vmexit;
+
+	vmexit = vm_exitinfo(vm, vcpuid);
+	vmexit->rip = rip;
+	vmexit->inst_length = 0;
+	vmexit->exitcode = VM_EXITCODE_BOGUS;
+	vmm_stat_incr(vm, vcpuid, VMEXIT_ASTPENDING, 1);
+}
 
 int
-vm_run(struct vm *vm, int vcpuid, struct vm_exit *vm_exit)
+vm_run(struct vm *vm, struct vm_run *vmrun)
 {
-	int error;
+	struct vm_eventinfo evinfo;
+	int error, vcpuid;
 	struct vcpu *vcpu;
-	// uint64_t tscval;
+	struct pcb *pcb;
+	uint64_t tscval;
 	struct vm_exit *vme;
 	bool retu, intr_disabled;
-	void *rptr, *sptr;
+	pmap_t pmap;
+
+	vcpuid = vmrun->cpuid;
 
 	if (vcpuid < 0 || vcpuid >= VM_MAXCPU)
 		return (EINVAL);
 
-	if (!CPU_ISSET(((unsigned) vcpuid), &vm->active_cpus))
+	if (!CPU_ISSET(vcpuid, &vm->active_cpus))
 		return (EINVAL);
 
-	if (CPU_ISSET(((unsigned) vcpuid), &vm->suspended_cpus))
+	if (CPU_ISSET(vcpuid, &vm->suspended_cpus))
 		return (EINVAL);
 
-	rptr = &vm->rendezvous_func;
-	sptr = &vm->suspend;
+	pmap = vmspace_pmap(vm->vmspace);
 	vcpu = &vm->vcpu[vcpuid];
 	vme = &vcpu->exitinfo;
-	retu = false;
-
+	evinfo.rptr = &vm->rendezvous_func;
+	evinfo.sptr = &vm->suspend;
+	evinfo.iptr = &vcpu->reqidle;
 restart:
-	// tscval = rdtsc();
+	critical_enter();
+
+	KASSERT(!CPU_ISSET(curcpu, &pmap->pm_active),
+	    ("vm_run: absurd pm_active"));
+
+	tscval = rdtsc();
+
+	pcb = PCPU_GET(curpcb);
+	set_pcb_flags(pcb, PCB_FULL_IRET);
+
+	restore_guest_fpustate(vcpu);
 
 	vcpu_require_state(vm, vcpuid, VCPU_RUNNING);
-	error = VMRUN(vm->cookie, vcpuid, (register_t) vcpu->nextrip, rptr, sptr);
+	error = VMRUN(vm->cookie, vcpuid, vcpu->nextrip, pmap, &evinfo);
 	vcpu_require_state(vm, vcpuid, VCPU_FROZEN);
 
+	save_guest_fpustate(vcpu);
 
-	// vmm_stat_incr(vm, vcpuid, VCPU_TOTAL_RUNTIME, rdtsc() - tscval);
+	vmm_stat_incr(vm, vcpuid, VCPU_TOTAL_RUNTIME, rdtsc() - tscval);
+
+	critical_exit();
 
 	if (error == 0) {
 		retu = false;
-		vcpu->nextrip = vme->rip + ((unsigned) vme->inst_length);
-		switch (((int) (vme->exitcode))) {
+		vcpu->nextrip = vme->rip + vme->inst_length;
+		switch (vme->exitcode) {
+		case VM_EXITCODE_REQIDLE:
+			error = vm_handle_reqidle(vm, vcpuid, &retu);
+			break;
 		case VM_EXITCODE_SUSPENDED:
 			error = vm_handle_suspend(vm, vcpuid, &retu);
 			break;
@@ -1178,10 +1574,10 @@ restart:
 			break;
 		case VM_EXITCODE_HLT:
 			intr_disabled = ((vme->u.hlt.rflags & PSL_I) == 0);
-			error = vm_handle_hlt(vm, vcpuid, intr_disabled);
+			error = vm_handle_hlt(vm, vcpuid, intr_disabled, &retu);
 			break;
 		case VM_EXITCODE_PAGING:
-			error = 0;
+			error = vm_handle_paging(vm, vcpuid, &retu);
 			break;
 		case VM_EXITCODE_INST_EMUL:
 			error = vm_handle_inst_emul(vm, vcpuid, &retu);
@@ -1203,8 +1599,10 @@ restart:
 	if (error == 0 && retu == false)
 		goto restart;
 
-	/* copy the exit information (FIXME: zero copy) */
-	bcopy(vme, vm_exit, sizeof(struct vm_exit));
+	VCPU_CTR2(vm, vcpuid, "retu %d/%d", error, vme->exitcode);
+
+	/* copy the exit information */
+	bcopy(vme, &vmrun->vm_exit, sizeof(struct vm_exit));
 	return (error);
 }
 
@@ -1222,7 +1620,7 @@ vm_restart_instruction(void *arg, int vcpuid)
 		return (EINVAL);
 
 	vcpu = &vm->vcpu[vcpuid];
-	state = vcpu_get_state(vm, vcpuid);
+	state = vcpu_get_state(vm, vcpuid, NULL);
 	if (state == VCPU_RUNNING) {
 		/*
 		 * When a vcpu is "running" the next instruction is determined
@@ -1231,7 +1629,7 @@ vm_restart_instruction(void *arg, int vcpuid)
 		 * instruction to be restarted.
 		 */
 		vcpu->exitinfo.inst_length = 0;
-		VCPU_CTR1(vm, vcpuid, "restarting instruction at %#llx by "
+		VCPU_CTR1(vm, vcpuid, "restarting instruction at %#lx by "
 		    "setting inst_length to zero", vcpu->exitinfo.rip);
 	} else if (state == VCPU_FROZEN) {
 		/*
@@ -1243,10 +1641,10 @@ vm_restart_instruction(void *arg, int vcpuid)
 		error = vm_get_register(vm, vcpuid, VM_REG_GUEST_RIP, &rip);
 		KASSERT(!error, ("%s: error %d getting rip", __func__, error));
 		VCPU_CTR2(vm, vcpuid, "restarting instruction by updating "
-		    "nextrip from %#llx to %#llx", vcpu->nextrip, rip);
+		    "nextrip from %#lx to %#lx", vcpu->nextrip, rip);
 		vcpu->nextrip = rip;
 	} else {
-		xhyve_abort("%s: invalid state %d\n", __func__, state);
+		panic("%s: invalid state %d", __func__, state);
 	}
 	return (0);
 }
@@ -1274,7 +1672,7 @@ vm_exit_intinfo(struct vm *vm, int vcpuid, uint64_t info)
 	} else {
 		info = 0;
 	}
-	VCPU_CTR2(vm, vcpuid, "%s: info1(%#llx)", __func__, info);
+	VCPU_CTR2(vm, vcpuid, "%s: info1(%#lx)", __func__, info);
 	vcpu->exitintinfo = info;
 	return (0);
 }
@@ -1292,7 +1690,7 @@ exception_class(uint64_t info)
 {
 	int type, vector;
 
-	KASSERT(info & VM_INTINFO_VALID, ("intinfo must be valid: %#llx", info));
+	KASSERT(info & VM_INTINFO_VALID, ("intinfo must be valid: %#lx", info));
 	type = info & VM_INTINFO_TYPE;
 	vector = info & 0xff;
 
@@ -1340,8 +1738,8 @@ nested_fault(struct vm *vm, int vcpuid, uint64_t info1, uint64_t info2,
 	enum exc_class exc1, exc2;
 	int type1, vector1;
 
-	KASSERT(info1 & VM_INTINFO_VALID, ("info1 %#llx is not valid", info1));
-	KASSERT(info2 & VM_INTINFO_VALID, ("info2 %#llx is not valid", info2));
+	KASSERT(info1 & VM_INTINFO_VALID, ("info1 %#lx is not valid", info1));
+	KASSERT(info2 & VM_INTINFO_VALID, ("info2 %#lx is not valid", info2));
 
 	/*
 	 * If an exception occurs while attempting to call the double-fault
@@ -1350,7 +1748,7 @@ nested_fault(struct vm *vm, int vcpuid, uint64_t info1, uint64_t info2,
 	type1 = info1 & VM_INTINFO_TYPE;
 	vector1 = info1 & 0xff;
 	if (type1 == VM_INTINFO_HWEXCEPTION && vector1 == IDT_DF) {
-		VCPU_CTR2(vm, vcpuid, "triple fault: info1(%#llx), info2(%#llx)",
+		VCPU_CTR2(vm, vcpuid, "triple fault: info1(%#lx), info2(%#lx)",
 		    info1, info2);
 		vm_suspend(vm, VM_SUSPEND_TRIPLEFAULT);
 		*retinfo = 0;
@@ -1409,7 +1807,7 @@ vm_entry_intinfo(struct vm *vm, int vcpuid, uint64_t *retinfo)
 	if (vcpu->exception_pending) {
 		info2 = vcpu_exception_intinfo(vcpu);
 		vcpu->exception_pending = 0;
-		VCPU_CTR2(vm, vcpuid, "Exception %d delivered: %#llx",
+		VCPU_CTR2(vm, vcpuid, "Exception %d delivered: %#lx",
 		    vcpu->exc_vector, info2);
 	}
 
@@ -1426,8 +1824,8 @@ vm_entry_intinfo(struct vm *vm, int vcpuid, uint64_t *retinfo)
 	}
 
 	if (valid) {
-		VCPU_CTR4(vm, vcpuid, "%s: info1(%#llx), info2(%#llx), "
-		    "retinfo(%#llx)", __func__, info1, info2, *retinfo);
+		VCPU_CTR4(vm, vcpuid, "%s: info1(%#lx), info2(%#lx), "
+		    "retinfo(%#lx)", __func__, info1, info2, *retinfo);
 	}
 
 	return (valid);
@@ -1452,6 +1850,7 @@ vm_inject_exception(struct vm *vm, int vcpuid, int vector, int errcode_valid,
     uint32_t errcode, int restart_instruction)
 {
 	struct vcpu *vcpu;
+	uint64_t regval;
 	int error;
 
 	if (vcpuid < 0 || vcpuid >= VM_MAXCPU)
@@ -1474,6 +1873,16 @@ vm_inject_exception(struct vm *vm, int vcpuid, int vector, int errcode_valid,
 		VCPU_CTR2(vm, vcpuid, "Unable to inject exception %d due to "
 		    "pending exception %d", vector, vcpu->exc_vector);
 		return (EBUSY);
+	}
+
+	if (errcode_valid) {
+		/*
+		 * Exceptions don't deliver an error code in real mode.
+		 */
+		error = vm_get_register(vm, vcpuid, VM_REG_GUEST_CR0, &regval);
+		KASSERT(!error, ("%s: error %d getting CR0", __func__, error));
+		if (!(regval & CR0_PE))
+			errcode_valid = 0;
 	}
 
 	/*
@@ -1508,7 +1917,7 @@ vm_inject_fault(void *vmarg, int vcpuid, int vector, int errcode_valid,
 	restart_instruction = 1;
 
 	error = vm_inject_exception(vm, vcpuid, vector, errcode_valid,
-	    ((uint32_t) errcode), restart_instruction);
+	    errcode, restart_instruction);
 	KASSERT(error == 0, ("vm_inject_exception error %d", error));
 }
 
@@ -1519,7 +1928,7 @@ vm_inject_pf(void *vmarg, int vcpuid, int error_code, uint64_t cr2)
 	int error;
 
 	vm = vmarg;
-	VCPU_CTR2(vm, vcpuid, "Injecting page fault: error_code %#x, cr2 %#llx",
+	VCPU_CTR2(vm, vcpuid, "Injecting page fault: error_code %#x, cr2 %#lx",
 	    error_code, cr2);
 
 	error = vm_set_register(vm, vcpuid, VM_REG_GUEST_CR2, cr2);
@@ -1551,7 +1960,7 @@ vm_nmi_pending(struct vm *vm, int vcpuid)
 	struct vcpu *vcpu;
 
 	if (vcpuid < 0 || vcpuid >= VM_MAXCPU)
-		xhyve_abort("vm_nmi_pending: invalid vcpuid %d\n", vcpuid);
+		panic("vm_nmi_pending: invalid vcpuid %d", vcpuid);
 
 	vcpu = &vm->vcpu[vcpuid];
 
@@ -1564,12 +1973,12 @@ vm_nmi_clear(struct vm *vm, int vcpuid)
 	struct vcpu *vcpu;
 
 	if (vcpuid < 0 || vcpuid >= VM_MAXCPU)
-		xhyve_abort("vm_nmi_pending: invalid vcpuid %d\n", vcpuid);
+		panic("vm_nmi_pending: invalid vcpuid %d", vcpuid);
 
 	vcpu = &vm->vcpu[vcpuid];
 
 	if (vcpu->nmi_pending == 0)
-		xhyve_abort("vm_nmi_clear: inconsistent nmi_pending state\n");
+		panic("vm_nmi_clear: inconsistent nmi_pending state");
 
 	vcpu->nmi_pending = 0;
 	vmm_stat_incr(vm, vcpuid, VCPU_NMI_COUNT, 1);
@@ -1598,7 +2007,7 @@ vm_extint_pending(struct vm *vm, int vcpuid)
 	struct vcpu *vcpu;
 
 	if (vcpuid < 0 || vcpuid >= VM_MAXCPU)
-		xhyve_abort("vm_extint_pending: invalid vcpuid %d\n", vcpuid);
+		panic("vm_extint_pending: invalid vcpuid %d", vcpuid);
 
 	vcpu = &vm->vcpu[vcpuid];
 
@@ -1611,12 +2020,12 @@ vm_extint_clear(struct vm *vm, int vcpuid)
 	struct vcpu *vcpu;
 
 	if (vcpuid < 0 || vcpuid >= VM_MAXCPU)
-		xhyve_abort("vm_extint_pending: invalid vcpuid %d\n", vcpuid);
+		panic("vm_extint_pending: invalid vcpuid %d", vcpuid);
 
 	vcpu = &vm->vcpu[vcpuid];
 
 	if (vcpu->extint_pending == 0)
-		xhyve_abort("vm_extint_clear: inconsistent extint_pending state\n");
+		panic("vm_extint_clear: inconsistent extint_pending state");
 
 	vcpu->extint_pending = 0;
 	vmm_stat_incr(vm, vcpuid, VCPU_EXTINT_COUNT, 1);
@@ -1666,6 +2075,55 @@ vm_hpet(struct vm *vm)
 	return (vm->vhpet);
 }
 
+boolean_t
+vmm_is_pptdev(int bus, int slot, int func)
+{
+	int found, i, n;
+	int b, s, f;
+	char *val, *cp, *cp2;
+
+	/*
+	 * XXX
+	 * The length of an environment variable is limited to 128 bytes which
+	 * puts an upper limit on the number of passthru devices that may be
+	 * specified using a single environment variable.
+	 *
+	 * Work around this by scanning multiple environment variable
+	 * names instead of a single one - yuck!
+	 */
+	const char *names[] = { "pptdevs", "pptdevs2", "pptdevs3", NULL };
+
+	/* set pptdevs="1/2/3 4/5/6 7/8/9 10/11/12" */
+	found = 0;
+	for (i = 0; names[i] != NULL && !found; i++) {
+		cp = val = kern_getenv(names[i]);
+		while (cp != NULL && *cp != '\0') {
+			if ((cp2 = strchr(cp, ' ')) != NULL)
+				*cp2 = '\0';
+
+			n = sscanf(cp, "%d/%d/%d", &b, &s, &f);
+			if (n == 3 && bus == b && slot == s && func == f) {
+				found = 1;
+				break;
+			}
+		
+			if (cp2 != NULL)
+				*cp2++ = ' ';
+
+			cp = cp2;
+		}
+		freeenv(val);
+	}
+	return (found);
+}
+
+void *
+vm_iommu_domain(struct vm *vm)
+{
+
+	return (vm->iommu);
+}
+
 int
 vcpu_set_state(struct vm *vm, int vcpuid, enum vcpu_state newstate,
     bool from_idle)
@@ -1674,29 +2132,32 @@ vcpu_set_state(struct vm *vm, int vcpuid, enum vcpu_state newstate,
 	struct vcpu *vcpu;
 
 	if (vcpuid < 0 || vcpuid >= VM_MAXCPU)
-		xhyve_abort("vm_set_run_state: invalid vcpuid %d\n", vcpuid);
+		panic("vm_set_run_state: invalid vcpuid %d", vcpuid);
 
 	vcpu = &vm->vcpu[vcpuid];
 
 	vcpu_lock(vcpu);
-	error = vcpu_set_state_locked(vcpu, newstate, from_idle);
+	error = vcpu_set_state_locked(vm, vcpuid, newstate, from_idle);
 	vcpu_unlock(vcpu);
+
 	return (error);
 }
 
 enum vcpu_state
-vcpu_get_state(struct vm *vm, int vcpuid)
+vcpu_get_state(struct vm *vm, int vcpuid, int *hostcpu)
 {
 	struct vcpu *vcpu;
 	enum vcpu_state state;
 
 	if (vcpuid < 0 || vcpuid >= VM_MAXCPU)
-		xhyve_abort("vm_get_run_state: invalid vcpuid %d\n", vcpuid);
+		panic("vm_get_run_state: invalid vcpuid %d", vcpuid);
 
 	vcpu = &vm->vcpu[vcpuid];
 
 	vcpu_lock(vcpu);
 	state = vcpu->state;
+	if (hostcpu != NULL)
+		*hostcpu = vcpu->hostcpu;
 	vcpu_unlock(vcpu);
 
 	return (state);
@@ -1709,11 +2170,11 @@ vm_activate_cpu(struct vm *vm, int vcpuid)
 	if (vcpuid < 0 || vcpuid >= VM_MAXCPU)
 		return (EINVAL);
 
-	if (CPU_ISSET(((unsigned) vcpuid), &vm->active_cpus))
+	if (CPU_ISSET(vcpuid, &vm->active_cpus))
 		return (EBUSY);
 
 	VCPU_CTR0(vm, vcpuid, "activated");
-	CPU_SET_ATOMIC(((unsigned) vcpuid), &vm->active_cpus);
+	CPU_SET_ATOMIC(vcpuid, &vm->active_cpus);
 	return (0);
 }
 
@@ -1772,41 +2233,56 @@ vm_set_x2apic_state(struct vm *vm, int vcpuid, enum x2apic_state state)
  * - If the vcpu is running on a different host_cpu then an IPI will be directed
  *   to the host_cpu to cause the vcpu to trap into the hypervisor.
  */
-void
-vcpu_notify_event(struct vm *vm, int vcpuid, UNUSED bool lapic_intr)
+static void
+vcpu_notify_event_locked(struct vcpu *vcpu, bool lapic_intr)
 {
-	struct vcpu *vcpu;
+	int hostcpu;
 
-	vcpu = &vm->vcpu[vcpuid];
-	vcpu_lock(vcpu);
+	hostcpu = vcpu->hostcpu;
 	if (vcpu->state == VCPU_RUNNING) {
-		VCPU_INTERRUPT(vcpuid);
-		/* FIXME */
-		// if (hostcpu != curcpu) {
-		// 	if (lapic_intr) {
-		// 		vlapic_post_intr(vcpu->vlapic, hostcpu,
-		// 		    vmm_ipinum);
-		// 	} else {
-		// 		ipi_cpu(hostcpu, vmm_ipinum);
-		// 	}
-		// } else {
-		//	/*
-		//	 * If the 'vcpu' is running on 'curcpu' then it must
-		//	 * be sending a notification to itself (e.g. SELF_IPI).
-		//	 * The pending event will be picked up when the vcpu
-		//	 * transitions back to guest context.
-		//	 */
-		// }
+		KASSERT(hostcpu != NOCPU, ("vcpu running on invalid hostcpu"));
+		if (hostcpu != curcpu) {
+			if (lapic_intr) {
+				vlapic_post_intr(vcpu->vlapic, hostcpu,
+				    vmm_ipinum);
+			} else {
+				ipi_cpu(hostcpu, vmm_ipinum);
+			}
+		} else {
+			/*
+			 * If the 'vcpu' is running on 'curcpu' then it must
+			 * be sending a notification to itself (e.g. SELF_IPI).
+			 * The pending event will be picked up when the vcpu
+			 * transitions back to guest context.
+			 */
+		}
 	} else {
+		KASSERT(hostcpu == NOCPU, ("vcpu state %d not consistent "
+		    "with hostcpu %d", vcpu->state, hostcpu));
 		if (vcpu->state == VCPU_SLEEPING)
-			pthread_cond_signal(&vcpu->vcpu_sleep_cnd);
-			//wakeup_one(vcpu);
+			wakeup_one(vcpu);
 	}
+}
+
+void
+vcpu_notify_event(struct vm *vm, int vcpuid, bool lapic_intr)
+{
+	struct vcpu *vcpu = &vm->vcpu[vcpuid];
+
+	vcpu_lock(vcpu);
+	vcpu_notify_event_locked(vcpu, lapic_intr);
 	vcpu_unlock(vcpu);
 }
 
+struct vmspace *
+vm_get_vmspace(struct vm *vm)
+{
+
+	return (vm->vmspace);
+}
+
 int
-vm_apicid2vcpuid(UNUSED struct vm *vm, int apicid)
+vm_apicid2vcpuid(struct vm *vm, int apicid)
 {
 	/*
 	 * XXX apic id is assumed to be numerically identical to vcpu id
@@ -1820,11 +2296,15 @@ vm_smp_rendezvous(struct vm *vm, int vcpuid, cpuset_t dest,
 {
 	int i;
 
+	/*
+	 * Enforce that this function is called without any locks
+	 */
+	WITNESS_WARN(WARN_PANIC, NULL, "vm_smp_rendezvous");
 	KASSERT(vcpuid == -1 || (vcpuid >= 0 && vcpuid < VM_MAXCPU),
 	    ("vm_smp_rendezvous: invalid vcpuid %d", vcpuid));
 
 restart:
-	pthread_mutex_lock(&vm->rendezvous_mtx);
+	mtx_lock(&vm->rendezvous_mtx);
 	if (vm->rendezvous_func != NULL) {
 		/*
 		 * If a rendezvous is already in progress then we need to
@@ -1832,7 +2312,7 @@ restart:
 		 * of the targets of the rendezvous.
 		 */
 		RENDEZVOUS_CTR0(vm, vcpuid, "Rendezvous already in progress");
-		pthread_mutex_unlock(&vm->rendezvous_mtx);
+		mtx_unlock(&vm->rendezvous_mtx);
 		vm_handle_rendezvous(vm, vcpuid);
 		goto restart;
 	}
@@ -1844,14 +2324,14 @@ restart:
 	CPU_ZERO(&vm->rendezvous_done_cpus);
 	vm->rendezvous_arg = arg;
 	vm_set_rendezvous_func(vm, func);
-	pthread_mutex_unlock(&vm->rendezvous_mtx);
+	mtx_unlock(&vm->rendezvous_mtx);
 
 	/*
 	 * Wake up any sleeping vcpus and trigger a VM-exit in any running
 	 * vcpus so they handle the rendezvous as soon as possible.
 	 */
 	for (i = 0; i < VM_MAXCPU; i++) {
-		if (CPU_ISSET(((unsigned) i), &dest))
+		if (CPU_ISSET(i, &dest))
 			vcpu_notify_event(vm, i, false);
 	}
 
@@ -1896,16 +2376,22 @@ vm_segment_name(int seg)
 		VM_REG_GUEST_GS
 	};
 
-	KASSERT(seg >= 0 && seg < ((int) nitems(seg_names)),
+	KASSERT(seg >= 0 && seg < nitems(seg_names),
 	    ("%s: invalid segment encoding %d", __func__, seg));
 	return (seg_names[seg]);
 }
 
 void
-vm_copy_teardown(UNUSED struct vm *vm, UNUSED int vcpuid,
-	struct vm_copyinfo *copyinfo, int num_copyinfo)
+vm_copy_teardown(struct vm *vm, int vcpuid, struct vm_copyinfo *copyinfo,
+    int num_copyinfo)
 {
-	bzero(copyinfo, ((unsigned) num_copyinfo) * sizeof(struct vm_copyinfo));
+	int idx;
+
+	for (idx = 0; idx < num_copyinfo; idx++) {
+		if (copyinfo[idx].cookie != NULL)
+			vm_gpa_release(copyinfo[idx].cookie);
+	}
+	bzero(copyinfo, num_copyinfo * sizeof(struct vm_copyinfo));
 }
 
 int
@@ -1915,10 +2401,10 @@ vm_copy_setup(struct vm *vm, int vcpuid, struct vm_guest_paging *paging,
 {
 	int error, idx, nused;
 	size_t n, off, remaining;
-	void *hva;
+	void *hva, *cookie;
 	uint64_t gpa;
 
-	bzero(copyinfo, sizeof(struct vm_copyinfo) * ((unsigned) num_copyinfo));
+	bzero(copyinfo, sizeof(struct vm_copyinfo) * num_copyinfo);
 
 	nused = 0;
 	remaining = len;
@@ -1927,8 +2413,8 @@ vm_copy_setup(struct vm *vm, int vcpuid, struct vm_guest_paging *paging,
 		error = vm_gla2gpa(vm, vcpuid, paging, gla, prot, &gpa, fault);
 		if (error || *fault)
 			return (error);
-		off = gpa & XHYVE_PAGE_MASK;
-		n = min(remaining, XHYVE_PAGE_SIZE - off);
+		off = gpa & PAGE_MASK;
+		n = min(remaining, PAGE_SIZE - off);
 		copyinfo[nused].gpa = gpa;
 		copyinfo[nused].len = n;
 		remaining -= n;
@@ -1937,10 +2423,12 @@ vm_copy_setup(struct vm *vm, int vcpuid, struct vm_guest_paging *paging,
 	}
 
 	for (idx = 0; idx < nused; idx++) {
-		hva = vm_gpa2hva(vm, copyinfo[idx].gpa, copyinfo[idx].len);
+		hva = vm_gpa_hold(vm, copyinfo[idx].gpa, copyinfo[idx].len,
+		    prot, &cookie);
 		if (hva == NULL)
 			break;
 		copyinfo[idx].hva = hva;
+		copyinfo[idx].cookie = cookie;
 	}
 
 	if (idx != nused) {
@@ -1953,12 +2441,12 @@ vm_copy_setup(struct vm *vm, int vcpuid, struct vm_guest_paging *paging,
 }
 
 void
-vm_copyin(UNUSED struct vm *vm, UNUSED int vcpuid, struct vm_copyinfo *copyinfo,
-	void *kaddr, size_t len)
+vm_copyin(struct vm *vm, int vcpuid, struct vm_copyinfo *copyinfo, void *kaddr,
+    size_t len)
 {
 	char *dst;
 	int idx;
-
+	
 	dst = kaddr;
 	idx = 0;
 	while (len > 0) {
@@ -1970,7 +2458,7 @@ vm_copyin(UNUSED struct vm *vm, UNUSED int vcpuid, struct vm_copyinfo *copyinfo,
 }
 
 void
-vm_copyout(UNUSED struct vm *vm, UNUSED int vcpuid, const void *kaddr,
+vm_copyout(struct vm *vm, int vcpuid, const void *kaddr,
     struct vm_copyinfo *copyinfo, size_t len)
 {
 	const char *src;
@@ -1985,3 +2473,33 @@ vm_copyout(UNUSED struct vm *vm, UNUSED int vcpuid, const void *kaddr,
 		idx++;
 	}
 }
+
+/*
+ * Return the amount of in-use and wired memory for the VM. Since
+ * these are global stats, only return the values with for vCPU 0
+ */
+VMM_STAT_DECLARE(VMM_MEM_RESIDENT);
+VMM_STAT_DECLARE(VMM_MEM_WIRED);
+
+static void
+vm_get_rescnt(struct vm *vm, int vcpu, struct vmm_stat_type *stat)
+{
+
+	if (vcpu == 0) {
+		vmm_stat_set(vm, vcpu, VMM_MEM_RESIDENT,
+	       	    PAGE_SIZE * vmspace_resident_count(vm->vmspace));
+	}	
+}
+
+static void
+vm_get_wiredcnt(struct vm *vm, int vcpu, struct vmm_stat_type *stat)
+{
+
+	if (vcpu == 0) {
+		vmm_stat_set(vm, vcpu, VMM_MEM_WIRED,
+	      	    PAGE_SIZE * pmap_wired_count(vmspace_pmap(vm->vmspace)));
+	}	
+}
+
+VMM_STAT_FUNC(VMM_MEM_RESIDENT, "Resident memory", vm_get_rescnt);
+VMM_STAT_FUNC(VMM_MEM_WIRED, "Wired memory", vm_get_wiredcnt);

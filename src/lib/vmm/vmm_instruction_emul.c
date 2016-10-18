@@ -1,7 +1,6 @@
 /*-
  * Copyright (c) 2012 Sandvine, Inc.
  * Copyright (c) 2012 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,27 +27,35 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <strings.h>
-#include <errno.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/atomic.h>
-#include <xhyve/support/psl.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm_instruction_emul.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
-#define PG_V 0x001 /* P	Valid */
-#define PG_RW 0x002 /* R/W Read/Write */
-#define PG_U 0x004 /* U/S  User/Supervisor */
-#define PG_A 0x020 /* A	Accessed */
-#define PG_M 0x040 /* D	Dirty */
-#define PG_PS 0x080 /* PS Page size (0=4k,1=4M) */
-#define PGEX_P 0x01 /* Protection violation vs. not present */
-#define PGEX_W 0x02 /* during a Write cycle */
-#define PGEX_U 0x04 /* access from User mode (UPL) */
-#define PGEX_RSV 0x08 /* reserved PTE field is non-zero */
-#define PGEX_I 0x10 /* during an instruction fetch */
+#ifdef _KERNEL
+#include <sys/param.h>
+#include <sys/pcpu.h>
+#include <sys/systm.h>
+#include <sys/proc.h>
+
+#include <vm/vm.h>
+#include <vm/pmap.h>
+
+#include <machine/vmparam.h>
+#include <machine/vmm.h>
+#else	/* !_KERNEL */
+#include <sys/types.h>
+#include <sys/errno.h>
+#include <sys/_iovec.h>
+
+#include <machine/vmm.h>
+
+#include <assert.h>
+#include <vmmapi.h>
+#define	KASSERT(exp,msg)	assert((exp))
+#endif	/* _KERNEL */
+
+#include <machine/vmm_instruction_emul.h>
+#include <x86/psl.h>
+#include <x86/specialreg.h>
 
 /* struct vie_op.op_type */
 enum {
@@ -105,6 +112,10 @@ static const struct vie_op one_byte_opcodes[256] = {
 	[0x2B] = {
 		.op_byte = 0x2B,
 		.op_type = VIE_OP_TYPE_SUB,
+	},
+	[0x39] = {
+		.op_byte = 0x39,
+		.op_type = VIE_OP_TYPE_CMP,
 	},
 	[0x3B] = {
 		.op_byte = 0x3B,
@@ -290,9 +301,9 @@ vie_read_bytereg(void *vm, int vcpuid, struct vie *vie, uint8_t *rval)
 	 * base register right by 8 bits (%ah = %rax >> 8).
 	 */
 	if (lhbr)
-		*rval = (uint8_t) (val >> 8);
+		*rval = val >> 8;
 	else
-		*rval = (uint8_t) val;
+		*rval = val;
 	return (error);
 }
 
@@ -379,11 +390,11 @@ getcc(int opsize, uint64_t x, uint64_t y)
 	    ("getcc: invalid operand size %d", opsize));
 
 	if (opsize == 1)
-		return (getcc8(((uint8_t) x), ((uint8_t) y)));
+		return (getcc8(x, y));
 	else if (opsize == 2)
-		return (getcc16(((uint16_t) x), ((uint16_t) y)));
+		return (getcc16(x, y));
 	else if (opsize == 4)
-		return (getcc32(((uint32_t) x), ((uint32_t) y)));
+		return (getcc32(x, y));
 	else
 		return (getcc64(x, y));
 }
@@ -435,7 +446,7 @@ emulate_mov(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 		size = 1;	/* override for byte operation */
 		error = memread(vm, vcpuid, gpa, &val, size, arg);
 		if (error == 0)
-			error = vie_write_bytereg(vm, vcpuid, vie, ((uint8_t) val));
+			error = vie_write_bytereg(vm, vcpuid, vie, val);
 		break;
 	case 0x8B:
 		/*
@@ -467,7 +478,7 @@ emulate_mov(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 		/*
 		 * MOV from AX/EAX/RAX to seg:moffset
 		 * A3:		mov moffs16, AX
-		 * A3:		mov moffs32, EAX
+		 * A3:		mov moffs32, EAX 
 		 * REX.W + A3:	mov moffs64, RAX
 		 */
 		error = vie_read_register(vm, vcpuid, VM_REG_GUEST_RAX, &val);
@@ -483,8 +494,7 @@ emulate_mov(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 		 * REX + C6/0	mov r/m8, imm8
 		 */
 		size = 1;	/* override for byte operation */
-		error = memwrite(vm, vcpuid, gpa, ((uint64_t) vie->immediate), size,
-			arg);
+		error = memwrite(vm, vcpuid, gpa, vie->immediate, size, arg);
 		break;
 	case 0xC7:
 		/*
@@ -493,7 +503,7 @@ emulate_mov(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 		 * C7/0		mov r/m32, imm32
 		 * REX.W + C7/0	mov r/m64, imm32 (sign-extended to 64-bits)
 		 */
-		val = ((uint64_t) vie->immediate) & size2mask[size];
+		val = vie->immediate & size2mask[size];
 		error = memwrite(vm, vcpuid, gpa, val, size, arg);
 		break;
 	default:
@@ -505,7 +515,7 @@ emulate_mov(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 
 static int
 emulate_movx(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
-	     mem_region_read_t memread, UNUSED mem_region_write_t memwrite,
+	     mem_region_read_t memread, mem_region_write_t memwrite,
 	     void *arg)
 {
 	int error, size;
@@ -578,7 +588,7 @@ emulate_movx(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 		reg = gpr_map[vie->reg];
 
 		/* sign extend byte */
-		val = (uint64_t) ((int64_t) ((int8_t) val));
+		val = (int8_t)val;
 
 		/* write the result */
 		error = vie_update_register(vm, vcpuid, reg, val, size);
@@ -593,9 +603,9 @@ emulate_movx(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
  * Helper function to calculate and validate a linear address.
  */
 static int
-get_gla(void *vm, int vcpuid, UNUSED struct vie *vie,
-	struct vm_guest_paging *paging, int opsize, int addrsize, int prot,
-	enum vm_reg_name seg, enum vm_reg_name gpr, uint64_t *gla, int *fault)
+get_gla(void *vm, int vcpuid, struct vie *vie, struct vm_guest_paging *paging,
+    int opsize, int addrsize, int prot, enum vm_reg_name seg,
+    enum vm_reg_name gpr, uint64_t *gla, int *fault)
 {
 	struct seg_desc desc;
 	uint64_t cr0, val, rflags;
@@ -650,14 +660,17 @@ emulate_movs(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
     struct vm_guest_paging *paging, mem_region_read_t memread,
     mem_region_write_t memwrite, void *arg)
 {
+#ifdef _KERNEL
 	struct vm_copyinfo copyinfo[2];
+#else
+	struct iovec copyinfo[2];
+#endif
 	uint64_t dstaddr, srcaddr, dstgpa, srcgpa, val;
 	uint64_t rcx, rdi, rsi, rflags;
 	int error, fault, opsize, seg, repeat;
 
 	opsize = (vie->op.op_byte == 0xA4) ? 1 : vie->opsize;
 	val = 0;
-	rcx = 0;
 	error = 0;
 
 	/*
@@ -701,13 +714,12 @@ emulate_movs(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 
 	seg = vie->segment_override ? vie->segment_register : VM_REG_GUEST_DS;
 	error = get_gla(vm, vcpuid, vie, paging, opsize, vie->addrsize,
-	    XHYVE_PROT_READ, ((enum vm_reg_name) seg), VM_REG_GUEST_RSI, &srcaddr,
-	     &fault);
+	    PROT_READ, seg, VM_REG_GUEST_RSI, &srcaddr, &fault);
 	if (error || fault)
 		goto done;
 
-	error = vm_copy_setup(vm, vcpuid, paging, srcaddr, ((size_t) opsize),
-		XHYVE_PROT_READ, copyinfo, nitems(copyinfo), &fault);
+	error = vm_copy_setup(vm, vcpuid, paging, srcaddr, opsize, PROT_READ,
+	    copyinfo, nitems(copyinfo), &fault);
 	if (error == 0) {
 		if (fault)
 			goto done;	/* Resume guest to handle fault */
@@ -715,7 +727,7 @@ emulate_movs(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 		/*
 		 * case (2): read from system memory and write to mmio.
 		 */
-		vm_copyin(vm, vcpuid, copyinfo, &val, ((size_t) opsize));
+		vm_copyin(vm, vcpuid, copyinfo, &val, opsize);
 		vm_copy_teardown(vm, vcpuid, copyinfo, nitems(copyinfo));
 		error = memwrite(vm, vcpuid, gpa, val, opsize, arg);
 		if (error)
@@ -727,13 +739,13 @@ emulate_movs(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 		 */
 
 		error = get_gla(vm, vcpuid, vie, paging, opsize, vie->addrsize,
-		    XHYVE_PROT_WRITE, VM_REG_GUEST_ES, VM_REG_GUEST_RDI, &dstaddr,
+		    PROT_WRITE, VM_REG_GUEST_ES, VM_REG_GUEST_RDI, &dstaddr,
 		    &fault);
 		if (error || fault)
 			goto done;
 
-		error = vm_copy_setup(vm, vcpuid, paging, dstaddr, ((size_t) opsize),
-		    XHYVE_PROT_WRITE, copyinfo, nitems(copyinfo), &fault);
+		error = vm_copy_setup(vm, vcpuid, paging, dstaddr, opsize,
+		    PROT_WRITE, copyinfo, nitems(copyinfo), &fault);
 		if (error == 0) {
 			if (fault)
 				goto done;    /* Resume guest to handle fault */
@@ -751,7 +763,7 @@ emulate_movs(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 			if (error)
 				goto done;
 
-			vm_copyout(vm, vcpuid, &val, copyinfo, ((size_t) opsize));
+			vm_copyout(vm, vcpuid, &val, copyinfo, opsize);
 			vm_copy_teardown(vm, vcpuid, copyinfo, nitems(copyinfo));
 		} else {
 			/*
@@ -763,12 +775,12 @@ emulate_movs(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 			 * to address translation faults.
 			 */
 			error = vm_gla2gpa(vm, vcpuid, paging, srcaddr,
-				XHYVE_PROT_READ, &srcgpa, &fault);
+			    PROT_READ, &srcgpa, &fault);
 			if (error || fault)
 				goto done;
 
 			error = vm_gla2gpa(vm, vcpuid, paging, dstaddr,
-				XHYVE_PROT_WRITE, &dstgpa, &fault);
+			   PROT_WRITE, &dstgpa, &fault);
 			if (error || fault)
 				goto done;
 
@@ -792,11 +804,11 @@ emulate_movs(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 	KASSERT(error == 0, ("%s: error %d getting rflags", __func__, error));
 
 	if (rflags & PSL_D) {
-		rsi -= ((uint64_t) opsize);
-		rdi -= ((uint64_t) opsize);
+		rsi -= opsize;
+		rdi -= opsize;
 	} else {
-		rsi += ((uint64_t) opsize);
-		rdi += ((uint64_t) opsize);
+		rsi += opsize;
+		rdi += opsize;
 	}
 
 	error = vie_update_register(vm, vcpuid, VM_REG_GUEST_RSI, rsi,
@@ -827,7 +839,7 @@ done:
 
 static int
 emulate_stos(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
-    UNUSED struct vm_guest_paging *paging, UNUSED mem_region_read_t memread,
+    struct vm_guest_paging *paging, mem_region_read_t memread,
     mem_region_write_t memwrite, void *arg)
 {
 	int error, opsize, repeat;
@@ -836,7 +848,6 @@ emulate_stos(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 
 	opsize = (vie->op.op_byte == 0xAA) ? 1 : vie->opsize;
 	repeat = vie->repz_present | vie->repnz_present;
-	rcx = 0;
 
 	if (repeat) {
 		error = vie_read_register(vm, vcpuid, VM_REG_GUEST_RCX, &rcx);
@@ -864,9 +875,9 @@ emulate_stos(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 	KASSERT(error == 0, ("%s: error %d getting rflags", __func__, error));
 
 	if (rflags & PSL_D)
-		rdi -= ((uint64_t) opsize);
+		rdi -= opsize;
 	else
-		rdi += ((uint64_t) opsize);
+		rdi += opsize;
 
 	error = vie_update_register(vm, vcpuid, VM_REG_GUEST_RDI, rdi,
 	    vie->addrsize);
@@ -897,7 +908,6 @@ emulate_and(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 	uint64_t result, rflags, rflags2, val1, val2;
 
 	size = vie->opsize;
-	result = 0;
 	error = EINVAL;
 
 	switch (vie->op.op_byte) {
@@ -950,7 +960,7 @@ emulate_and(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 		 * perform the operation with the pre-fetched immediate
 		 * operand and write the result
 		 */
-                result = val1 & ((uint64_t) vie->immediate);
+                result = val1 & vie->immediate;
                 error = memwrite(vm, vcpuid, gpa, result, size, arg);
 		break;
 	default:
@@ -970,7 +980,7 @@ emulate_and(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 	 * The updated status flags are obtained by subtracting 0 from 'result'.
 	 */
 	rflags2 = getcc(size, result, 0);
-	rflags &= ~((uint64_t) RFLAGS_STATUS_BITS);
+	rflags &= ~RFLAGS_STATUS_BITS;
 	rflags |= rflags2 & (PSL_PF | PSL_Z | PSL_N);
 
 	error = vie_update_register(vm, vcpuid, VM_REG_GUEST_RFLAGS, rflags, 8);
@@ -985,7 +995,6 @@ emulate_or(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 	uint64_t val1, result, rflags, rflags2;
 
 	size = vie->opsize;
-	result = 0;
 	error = EINVAL;
 
 	switch (vie->op.op_byte) {
@@ -1013,7 +1022,7 @@ emulate_or(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 		 * perform the operation with the pre-fetched immediate
 		 * operand and write the result
 		 */
-                result = val1 | ((uint64_t) vie->immediate);
+                result = val1 | vie->immediate;
                 error = memwrite(vm, vcpuid, gpa, result, size, arg);
 		break;
 	default:
@@ -1033,7 +1042,7 @@ emulate_or(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 	 * The updated status flags are obtained by subtracting 0 from 'result'.
 	 */
 	rflags2 = getcc(size, result, 0);
-	rflags &= ~((uint64_t) RFLAGS_STATUS_BITS);
+	rflags &= ~RFLAGS_STATUS_BITS;
 	rflags |= rflags2 & (PSL_PF | PSL_Z | PSL_N);
 
 	error = vie_update_register(vm, vcpuid, VM_REG_GUEST_RFLAGS, rflags, 8);
@@ -1042,38 +1051,49 @@ emulate_or(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 
 static int
 emulate_cmp(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
-	    mem_region_read_t memread, UNUSED mem_region_write_t memwrite,
-	    void *arg)
+	    mem_region_read_t memread, mem_region_write_t memwrite, void *arg)
 {
 	int error, size;
-	uint64_t op1, op2, rflags, rflags2;
+	uint64_t regop, memop, op1, op2, rflags, rflags2;
 	enum vm_reg_name reg;
 
 	size = vie->opsize;
 	switch (vie->op.op_byte) {
+	case 0x39:
 	case 0x3B:
 		/*
+		 * 39/r		CMP r/m16, r16
+		 * 39/r		CMP r/m32, r32
+		 * REX.W 39/r	CMP r/m64, r64
+		 *
 		 * 3B/r		CMP r16, r/m16
 		 * 3B/r		CMP r32, r/m32
 		 * REX.W + 3B/r	CMP r64, r/m64
 		 *
-		 * Compare first operand (reg) with second operand (r/m) and
+		 * Compare the first operand with the second operand and
 		 * set status flags in EFLAGS register. The comparison is
 		 * performed by subtracting the second operand from the first
 		 * operand and then setting the status flags.
 		 */
 
-		/* Get the first operand */
+		/* Get the register operand */
 		reg = gpr_map[vie->reg];
-		error = vie_read_register(vm, vcpuid, reg, &op1);
+		error = vie_read_register(vm, vcpuid, reg, &regop);
 		if (error)
 			return (error);
 
-		/* Get the second operand */
-		error = memread(vm, vcpuid, gpa, &op2, size, arg);
+		/* Get the memory operand */
+		error = memread(vm, vcpuid, gpa, &memop, size, arg);
 		if (error)
 			return (error);
 
+		if (vie->op.op_byte == 0x3B) {
+			op1 = regop;
+			op2 = memop;
+		} else {
+			op1 = memop;
+			op2 = regop;
+		}
 		rflags2 = getcc(size, op1, op2);
 		break;
 	case 0x80:
@@ -1106,7 +1126,7 @@ emulate_cmp(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 		if (error)
 			return (error);
 
-		rflags2 = getcc(size, op1, ((uint64_t) vie->immediate));
+		rflags2 = getcc(size, op1, vie->immediate);
 		break;
 	default:
 		return (EINVAL);
@@ -1114,7 +1134,7 @@ emulate_cmp(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 	error = vie_read_register(vm, vcpuid, VM_REG_GUEST_RFLAGS, &rflags);
 	if (error)
 		return (error);
-	rflags &= ~((uint64_t) RFLAGS_STATUS_BITS);
+	rflags &= ~RFLAGS_STATUS_BITS;
 	rflags |= rflags2 & RFLAGS_STATUS_BITS;
 
 	error = vie_update_register(vm, vcpuid, VM_REG_GUEST_RFLAGS, rflags, 8);
@@ -1123,23 +1143,20 @@ emulate_cmp(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 
 static int
 emulate_sub(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
-	    mem_region_read_t memread, UNUSED mem_region_write_t memwrite,
-	    void *arg)
+	    mem_region_read_t memread, mem_region_write_t memwrite, void *arg)
 {
 	int error, size;
 	uint64_t nval, rflags, rflags2, val1, val2;
 	enum vm_reg_name reg;
 
 	size = vie->opsize;
-	val1 = 0;
-	val2 = 0;
 	error = EINVAL;
 
 	switch (vie->op.op_byte) {
 	case 0x2B:
 		/*
 		 * SUB r/m from r and store the result in r
-		 *
+		 * 
 		 * 2B/r            SUB r16, r/m16
 		 * 2B/r            SUB r32, r/m32
 		 * REX.W + 2B/r    SUB r64, r/m64
@@ -1171,7 +1188,7 @@ emulate_sub(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 		if (error)
 			return (error);
 
-		rflags &= ~((uint64_t) RFLAGS_STATUS_BITS);
+		rflags &= ~RFLAGS_STATUS_BITS;
 		rflags |= rflags2 & RFLAGS_STATUS_BITS;
 		error = vie_update_register(vm, vcpuid, VM_REG_GUEST_RFLAGS,
 		    rflags, 8);
@@ -1185,7 +1202,11 @@ emulate_stack_op(void *vm, int vcpuid, uint64_t mmio_gpa, struct vie *vie,
     struct vm_guest_paging *paging, mem_region_read_t memread,
     mem_region_write_t memwrite, void *arg)
 {
+#ifdef _KERNEL
 	struct vm_copyinfo copyinfo[2];
+#else
+	struct iovec copyinfo[2];
+#endif
 	struct seg_desc ss_desc;
 	uint64_t cr0, rflags, rsp, stack_gla, val;
 	int error, fault, size, stackaddrsize, pushop;
@@ -1233,11 +1254,11 @@ emulate_stack_op(void *vm, int vcpuid, uint64_t mmio_gpa, struct vie *vie,
 	error = vie_read_register(vm, vcpuid, VM_REG_GUEST_RSP, &rsp);
 	KASSERT(error == 0, ("%s: error %d getting rsp", __func__, error));
 	if (pushop) {
-		rsp -= ((uint64_t) size);
+		rsp -= size;
 	}
 
 	if (vie_calculate_gla(paging->cpu_mode, VM_REG_GUEST_SS, &ss_desc,
-	    rsp, size, stackaddrsize, pushop ? XHYVE_PROT_WRITE : XHYVE_PROT_READ,
+	    rsp, size, stackaddrsize, pushop ? PROT_WRITE : PROT_READ,
 	    &stack_gla)) {
 		vm_inject_ss(vm, vcpuid, 0);
 		return (0);
@@ -1253,8 +1274,8 @@ emulate_stack_op(void *vm, int vcpuid, uint64_t mmio_gpa, struct vie *vie,
 		return (0);
 	}
 
-	error = vm_copy_setup(vm, vcpuid, paging, stack_gla, ((size_t) size),
-	    pushop ? XHYVE_PROT_WRITE : XHYVE_PROT_READ, copyinfo, nitems(copyinfo),
+	error = vm_copy_setup(vm, vcpuid, paging, stack_gla, size,
+	    pushop ? PROT_WRITE : PROT_READ, copyinfo, nitems(copyinfo),
 	    &fault);
 	if (error || fault)
 		return (error);
@@ -1262,11 +1283,11 @@ emulate_stack_op(void *vm, int vcpuid, uint64_t mmio_gpa, struct vie *vie,
 	if (pushop) {
 		error = memread(vm, vcpuid, mmio_gpa, &val, size, arg);
 		if (error == 0)
-			vm_copyout(vm, vcpuid, &val, copyinfo, ((size_t) size));
+			vm_copyout(vm, vcpuid, &val, copyinfo, size);
 	} else {
-		vm_copyin(vm, vcpuid, copyinfo, &val, ((size_t) size));
+		vm_copyin(vm, vcpuid, copyinfo, &val, size);
 		error = memwrite(vm, vcpuid, mmio_gpa, val, size, arg);
-		rsp += ((uint64_t) size);
+		rsp += size;
 	}
 	vm_copy_teardown(vm, vcpuid, copyinfo, nitems(copyinfo));
 
@@ -1322,7 +1343,7 @@ emulate_pop(void *vm, int vcpuid, uint64_t mmio_gpa, struct vie *vie,
 
 static int
 emulate_group1(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
-    UNUSED struct vm_guest_paging *paging, mem_region_read_t memread,
+    struct vm_guest_paging *paging, mem_region_read_t memread,
     mem_region_write_t memwrite, void *memarg)
 {
 	int error;
@@ -1350,7 +1371,7 @@ emulate_group1(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 
 static int
 emulate_bittest(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
-    mem_region_read_t memread, UNUSED mem_region_write_t memwrite, void *memarg)
+    mem_region_read_t memread, mem_region_write_t memwrite, void *memarg)
 {
 	uint64_t val, rflags;
 	int error, bitmask, bitoff;
@@ -1382,7 +1403,7 @@ emulate_bittest(void *vm, int vcpuid, uint64_t gpa, struct vie *vie,
 	if (val & (1UL << bitoff))
 		rflags |= PSL_C;
 	else
-		rflags &= ~((uint64_t) PSL_C);
+		rflags &= ~PSL_C;
 
 	error = vie_update_register(vm, vcpuid, VM_REG_GUEST_RFLAGS, rflags, 8);
 	KASSERT(error == 0, ("%s: error %d updating rflags", __func__, error));
@@ -1468,7 +1489,7 @@ vie_alignment_check(int cpl, int size, uint64_t cr0, uint64_t rf, uint64_t gla)
 	if (cpl != 3 || (cr0 & CR0_AM) == 0 || (rf & PSL_AC) == 0)
 		return (0);
 
-	return ((gla & ((uint64_t) (size - 1))) ? 1 : 0);
+	return ((gla & (size - 1)) ? 1 : 0);
 }
 
 int
@@ -1510,7 +1531,7 @@ vie_calculate_gla(enum vm_cpu_mode cpu_mode, enum vm_reg_name seg,
 	    ("%s: invalid segment %d", __func__, seg));
 	KASSERT(length == 1 || length == 2 || length == 4 || length == 8,
 	    ("%s: invalid operand size %d", __func__, length));
-	KASSERT((prot & ~(XHYVE_PROT_READ | XHYVE_PROT_WRITE)) == 0,
+	KASSERT((prot & ~(PROT_READ | PROT_WRITE)) == 0,
 	    ("%s: invalid prot %#x", __func__, prot));
 
 	firstoff = offset;
@@ -1530,7 +1551,7 @@ vie_calculate_gla(enum vm_cpu_mode cpu_mode, enum vm_reg_name seg,
 		if (SEG_DESC_UNUSABLE(desc->access))
 			return (-1);
 
-		/*
+		/* 
 		 * The processor generates a #NP exception when a segment
 		 * register is loaded with a selector that points to a
 		 * descriptor that is not present. If this was the case then
@@ -1546,13 +1567,13 @@ vie_calculate_gla(enum vm_cpu_mode cpu_mode, enum vm_reg_name seg,
 		KASSERT(type >= 16 && type <= 31, ("segment %d has invalid "
 		    "descriptor type %#x", seg, type));
 
-		if (prot & XHYVE_PROT_READ) {
+		if (prot & PROT_READ) {
 			/* #GP on a read access to a exec-only code segment */
 			if ((type & 0xA) == 0x8)
 				return (-1);
 		}
 
-		if (prot & XHYVE_PROT_WRITE) {
+		if (prot & PROT_WRITE) {
 			/*
 			 * #GP on a write access to a code segment or a
 			 * read-only data segment.
@@ -1608,6 +1629,7 @@ vie_calculate_gla(enum vm_cpu_mode cpu_mode, enum vm_reg_name seg,
 	return (0);
 }
 
+#ifdef _KERNEL
 void
 vie_init(struct vie *vie, const char *inst_bytes, int inst_length)
 {
@@ -1621,8 +1643,8 @@ vie_init(struct vie *vie, const char *inst_bytes, int inst_length)
 	vie->segment_register = VM_REG_LAST;
 
 	if (inst_length) {
-		bcopy(inst_bytes, vie->inst, ((size_t) inst_length));
-		vie->num_valid = ((uint8_t) inst_length);
+		bcopy(inst_bytes, vie->inst, inst_length);
+		vie->num_valid = inst_length;
 	}
 }
 
@@ -1633,16 +1655,35 @@ pf_error_code(int usermode, int prot, int rsvd, uint64_t pte)
 
 	if (pte & PG_V)
 		error_code |= PGEX_P;
-	if (prot & XHYVE_PROT_WRITE)
+	if (prot & VM_PROT_WRITE)
 		error_code |= PGEX_W;
 	if (usermode)
 		error_code |= PGEX_U;
 	if (rsvd)
 		error_code |= PGEX_RSV;
-	if (prot & XHYVE_PROT_EXECUTE)
+	if (prot & VM_PROT_EXECUTE)
 		error_code |= PGEX_I;
 
 	return (error_code);
+}
+
+static void
+ptp_release(void **cookie)
+{
+	if (*cookie != NULL) {
+		vm_gpa_release(*cookie);
+		*cookie = NULL;
+	}
+}
+
+static void *
+ptp_hold(struct vm *vm, vm_paddr_t ptpphys, size_t len, void **cookie)
+{
+	void *ptr;
+
+	ptp_release(cookie);
+	ptr = vm_gpa_hold(vm, ptpphys, len, VM_PROT_RW, cookie);
+	return (ptr);
 }
 
 int
@@ -1658,20 +1699,15 @@ vm_gla2gpa(struct vm *vm, int vcpuid, struct vm_guest_paging *paging,
 	*guest_fault = 0;
 
 	usermode = (paging->cpl == 3 ? 1 : 0);
-	writable = prot & XHYVE_PROT_WRITE;
+	writable = prot & VM_PROT_WRITE;
 	cookie = NULL;
 	retval = 0;
 	retries = 0;
-	pte = 0;
-	pte32 = 0;
-	ptpshift = 0;
-	pgsize = 0;
-	ptpindex = 0;
-	ptpbase = NULL;
-	ptpbase32 = NULL;
-
 restart:
 	ptpphys = paging->cr3;		/* root of the page tables */
+	ptp_release(&cookie);
+	if (retries++ > 0)
+		maybe_yield();
 
 	if (vie_canonical_check(paging->cpu_mode, gla)) {
 		/*
@@ -1691,14 +1727,14 @@ restart:
 		nlevels = 2;
 		while (--nlevels >= 0) {
 			/* Zero out the lower 12 bits. */
-			ptpphys &= ~((uint64_t) 0xfff);
+			ptpphys &= ~0xfff;
 
-			ptpbase32 = vm_gpa2hva(vm, ptpphys, XHYVE_PAGE_SIZE);
+			ptpbase32 = ptp_hold(vm, ptpphys, PAGE_SIZE, &cookie);
 
 			if (ptpbase32 == NULL)
 				goto error;
 
-			ptpshift = XHYVE_PAGE_SHIFT + nlevels * 10;
+			ptpshift = PAGE_SHIFT + nlevels * 10;
 			ptpindex = (gla >> ptpshift) & 0x3FF;
 			pgsize = 1UL << ptpshift;
 
@@ -1752,7 +1788,7 @@ restart:
 		/* Zero out the lower 5 bits and the upper 32 bits */
 		ptpphys &= 0xffffffe0UL;
 
-		ptpbase = vm_gpa2hva(vm, ptpphys, (sizeof(*ptpbase) * 4));
+		ptpbase = ptp_hold(vm, ptpphys, sizeof(*ptpbase) * 4, &cookie);
 		if (ptpbase == NULL)
 			goto error;
 
@@ -1775,11 +1811,11 @@ restart:
 		/* Zero out the lower 12 bits and the upper 12 bits */
 		ptpphys >>= 12; ptpphys <<= 24; ptpphys >>= 12;
 
-		ptpbase = vm_gpa2hva(vm, ptpphys, XHYVE_PAGE_SIZE);
+		ptpbase = ptp_hold(vm, ptpphys, PAGE_SIZE, &cookie);
 		if (ptpbase == NULL)
 			goto error;
 
-		ptpshift = XHYVE_PAGE_SHIFT + nlevels * 9;
+		ptpshift = PAGE_SHIFT + nlevels * 9;
 		ptpindex = (gla >> ptpshift) & 0x1FF;
 		pgsize = 1UL << ptpshift;
 
@@ -1795,7 +1831,7 @@ restart:
 
 		/* Set the accessed bit in the page table entry */
 		if ((pte & PG_A) == 0) {
-			if (atomic_cmpset_64(((volatile u_long *) &ptpbase[ptpindex]),
+			if (atomic_cmpset_64(&ptpbase[ptpindex],
 			    pte, pte | PG_A) == 0) {
 				goto restart;
 			}
@@ -1815,17 +1851,15 @@ restart:
 
 	/* Set the dirty bit in the page table entry if necessary */
 	if (writable && (pte & PG_M) == 0) {
-		if (atomic_cmpset_64(((volatile u_long *) &ptpbase[ptpindex]), pte,
-			pte | PG_M) == 0)
-		{
+		if (atomic_cmpset_64(&ptpbase[ptpindex], pte, pte | PG_M) == 0)
 			goto restart;
-		}
 	}
 
 	/* Zero out the lower 'ptpshift' bits and the upper 12 bits */
 	pte >>= ptpshift; pte <<= (ptpshift + 12); pte >>= 12;
 	*gpa = pte | (gla & (pgsize - 1));
 done:
+	ptp_release(&cookie);
 	KASSERT(retval == 0 || retval == EFAULT, ("%s: unexpected retval %d",
 	    __func__, retval));
 	return (retval);
@@ -1845,17 +1879,17 @@ vmm_fetch_instruction(struct vm *vm, int vcpuid, struct vm_guest_paging *paging,
 	int error, prot;
 
 	if (inst_length > VIE_INST_SIZE)
-		xhyve_abort("vmm_fetch_instruction: invalid length %d\n", inst_length);
+		panic("vmm_fetch_instruction: invalid length %d", inst_length);
 
-	prot = XHYVE_PROT_READ | XHYVE_PROT_EXECUTE;
-	error = vm_copy_setup(vm, vcpuid, paging, rip, ((size_t) inst_length), prot,
+	prot = PROT_READ | PROT_EXEC;
+	error = vm_copy_setup(vm, vcpuid, paging, rip, inst_length, prot,
 	    copyinfo, nitems(copyinfo), faultptr);
 	if (error || *faultptr)
 		return (error);
 
-	vm_copyin(vm, vcpuid, copyinfo, vie->inst, ((size_t) inst_length));
+	vm_copyin(vm, vcpuid, copyinfo, vie->inst, inst_length);
 	vm_copy_teardown(vm, vcpuid, copyinfo, nitems(copyinfo));
-	vie->num_valid = (uint8_t) inst_length;
+	vie->num_valid = inst_length;
 	return (0);
 }
 
@@ -2153,7 +2187,7 @@ decode_sib(struct vie *vie)
 
 	/* 'scale' makes sense only in the context of an index register */
 	if (vie->index_register < VM_REG_LAST)
-		vie->scale = (uint8_t) (1 << vie->ss);
+		vie->scale = 1 << vie->ss;
 
 	vie_advance(vie);
 
@@ -2176,13 +2210,13 @@ decode_displacement(struct vie *vie)
 		return (0);
 
 	if (n != 1 && n != 4)
-		xhyve_abort("decode_displacement: invalid disp_bytes %d\n", n);
+		panic("decode_displacement: invalid disp_bytes %d", n);
 
 	for (i = 0; i < n; i++) {
 		if (vie_peek(vie, &x))
 			return (-1);
 
-		u.buf[i] = (char) x;
+		u.buf[i] = x;
 		vie_advance(vie);
 	}
 
@@ -2233,7 +2267,7 @@ decode_immediate(struct vie *vie)
 		if (vie_peek(vie, &x))
 			return (-1);
 
-		u.buf[i] = (char) x;
+		u.buf[i] = x;
 		vie_advance(vie);
 	}
 
@@ -2273,24 +2307,11 @@ decode_moffset(struct vie *vie)
 		if (vie_peek(vie, &x))
 			return (-1);
 
-		u.buf[i] = (char) x;
+		u.buf[i] = x;
 		vie_advance(vie);
 	}
-	vie->displacement = (int64_t) u.u64;
+	vie->displacement = u.u64;
 	return (0);
-}
-
-/*
- * Verify that all the bytes in the instruction buffer were consumed.
- */
-static int
-verify_inst_length(struct vie *vie)
-{
-
-	if (vie->num_processed)
-		return (0);
-	else
-		return (-1);
 }
 
 /*
@@ -2335,12 +2356,12 @@ verify_gla(struct vm *vm, int cpuid, uint64_t gla, struct vie *vie)
 	}
 
 	/* XXX assuming that the base address of the segment is 0 */
-	gla2 = base + vie->scale * idx + ((uint64_t) vie->displacement);
+	gla2 = base + vie->scale * idx + vie->displacement;
 	gla2 &= size2mask[vie->addrsize];
 	if (gla != gla2) {
 		printf("verify_gla mismatch: "
-		       "base(0x%0llx), scale(%d), index(0x%0llx), "
-		       "disp(0x%0llx), gla(0x%0llx), gla2(0x%0llx)\n",
+		       "base(0x%0lx), scale(%d), index(0x%0lx), "
+		       "disp(0x%0lx), gla(0x%0lx), gla2(0x%0lx)\n",
 		       base, vie->scale, idx, vie->displacement, gla, gla2);
 		return (-1);
 	}
@@ -2374,9 +2395,6 @@ vmm_decode_instruction(struct vm *vm, int cpuid, uint64_t gla,
 	if (decode_moffset(vie))
 		return (-1);
 
-	if (verify_inst_length(vie))
-		return (-1);
-
 	if ((vie->op.op_flags & VIE_OP_F_NO_GLA_VERIFICATION) == 0) {
 		if (verify_gla(vm, cpuid, gla, vie))
 			return (-1);
@@ -2386,3 +2404,4 @@ vmm_decode_instruction(struct vm *vm, int cpuid, uint64_t gla,
 
 	return (0);
 }
+#endif	/* _KERNEL */

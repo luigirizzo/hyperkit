@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2014 Tycho Nightingale <tycho.nightingale@pluribusnetworks.com>
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,22 +24,25 @@
  * SUCH DAMAGE.
  */
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <errno.h>
-#include <xhyve/support/timerreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_instruction_emul.h>
-#include <xhyve/vmm/vmm_ioport.h>
-#include <xhyve/vmm/vmm_ktr.h>
-#include <xhyve/vmm/io/vatpic.h>
-#include <xhyve/vmm/io/vatpit.h>
-#include <xhyve/vmm/io/vpmtmr.h>
-#include <xhyve/vmm/io/vrtc.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <sys/systm.h>
+
+#include <machine/vmm.h>
+#include <machine/vmm_instruction_emul.h>
+
+#include "vatpic.h"
+#include "vatpit.h"
+#include "vpmtmr.h"
+#include "vrtc.h"
+#include "vmm_ioport.h"
+#include "vmm_ktr.h"
 
 #define	MAX_IOPORTS		1280
 
-static const ioport_handler_func_t ioport_handler[MAX_IOPORTS] = {
+ioport_handler_func_t ioport_handler[MAX_IOPORTS] = {
 	[TIMER_MODE] = vatpit_handler,
 	[TIMER_CNTR0] = vatpit_handler,
 	[TIMER_CNTR1] = vatpit_handler,
@@ -57,7 +59,7 @@ static const ioport_handler_func_t ioport_handler[MAX_IOPORTS] = {
 	[IO_RTC + 1] = vrtc_data_handler,
 };
 
-#ifdef XHYVE_CONFIG_TRACE
+#ifdef KTR
 static const char *
 inout_instruction(struct vm_exit *vmexit)
 {
@@ -88,12 +90,12 @@ inout_instruction(struct vm_exit *vmexit)
 	if (vmexit->u.inout.string)
 		index += 6;
 
-	KASSERT(((unsigned) index) < nitems(iodesc), ("%s: invalid index %d",
+	KASSERT(index < nitems(iodesc), ("%s: invalid index %d",
 	    __func__, index));
 
 	return (iodesc[index]);
 }
-#endif	/* XHYVE_CONFIG_TRACE */
+#endif	/* KTR */
 
 static int
 emulate_inout_port(struct vm *vm, int vcpuid, struct vm_exit *vmexit,
@@ -112,7 +114,7 @@ emulate_inout_port(struct vm *vm, int vcpuid, struct vm_exit *vmexit,
 		return (0);
 	}
 
-	mask = (uint32_t) vie_size2mask(vmexit->u.inout.bytes);
+	mask = vie_size2mask(vmexit->u.inout.bytes);
 
 	if (!vmexit->u.inout.in) {
 		val = vmexit->u.inout.eax & mask;
@@ -144,7 +146,7 @@ emulate_inout_port(struct vm *vm, int vcpuid, struct vm_exit *vmexit,
 }
 
 static int
-emulate_inout_str(bool *retu)
+emulate_inout_str(struct vm *vm, int vcpuid, struct vm_exit *vmexit, bool *retu)
 {
 	*retu = true;
 	return (0);	/* Return to userspace to finish emulation */
@@ -160,17 +162,15 @@ vm_handle_inout(struct vm *vm, int vcpuid, struct vm_exit *vmexit, bool *retu)
 	    ("vm_handle_inout: invalid operand size %d", bytes));
 
 	if (vmexit->u.inout.string)
-		error = emulate_inout_str(retu);
+		error = emulate_inout_str(vm, vcpuid, vmexit, retu);
 	else
 		error = emulate_inout_port(vm, vcpuid, vmexit, retu);
 
-#ifdef XHYVE_CONFIG_TRACE
 	VCPU_CTR4(vm, vcpuid, "%s%s 0x%04x: %s",
 	    vmexit->u.inout.rep ? "rep " : "",
 	    inout_instruction(vmexit),
 	    vmexit->u.inout.port,
 	    error ? "error" : (*retu ? "userspace" : "handled"));
-#endif
 
 	return (error);
 }

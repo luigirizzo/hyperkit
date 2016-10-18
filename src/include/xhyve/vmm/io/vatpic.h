@@ -26,19 +26,15 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _VATPIC_H_
+#define	_VATPIC_H_
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <xhyve/vmm/vmm.h>
+#include <isa/isareg.h>
 
-#define IO_ICU1 0x020 /* 8259A Interrupt Controller #1 */
-#define IO_ICU2 0x0a0 /* 8259A Interrupt Controller #2 */
+#define	ICU_IMR_OFFSET	1
 
-#define ICU_IMR_OFFSET 1
-
-#define IO_ELCR1 0x4d0
-#define IO_ELCR2 0x4d1
+#define	IO_ELCR1	0x4d0
+#define	IO_ELCR2	0x4d1
 
 struct vatpic *vatpic_init(struct vm *vm);
 void vatpic_cleanup(struct vatpic *vatpic);
@@ -57,3 +53,5 @@ int vatpic_set_irq_trigger(struct vm *vm, int irq, enum vm_intr_trigger trigger)
 
 void vatpic_pending_intr(struct vm *vm, int *vecptr);
 void vatpic_intr_accepted(struct vm *vm, int vector);
+
+#endif	/* _VATPIC_H_ */

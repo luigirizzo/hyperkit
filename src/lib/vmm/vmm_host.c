@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2012 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,34 +26,136 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
-#include <sys/sysctl.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/support/specialreg.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_host.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
+#include <sys/param.h>
+#include <sys/pcpu.h>
+
+#include <machine/cpufunc.h>
+#include <machine/segments.h>
+#include <machine/specialreg.h>
+
+#include "vmm_host.h"
+
+static uint64_t vmm_host_efer, vmm_host_pat, vmm_host_cr0, vmm_host_cr4,
+	vmm_host_xcr0;
 static struct xsave_limits vmm_xsave_limits;
 
 void
 vmm_host_state_init(void)
 {
-	uint32_t avx1_0, regs[4];
-	size_t ln;
+	int regs[4];
 
-	vmm_xsave_limits.xsave_enabled = 0;
+	vmm_host_efer = rdmsr(MSR_EFER);
+	vmm_host_pat = rdmsr(MSR_PAT);
 
-	ln = sizeof(uint32_t);
-	if (!sysctlbyname("hw.optional.avx1_0", &avx1_0, &ln, NULL, 0) && avx1_0) {
-		cpuid_count(0xd, 0x0, regs);
+	/*
+	 * We always want CR0.TS to be set when the processor does a VM exit.
+	 *
+	 * With emulation turned on unconditionally after a VM exit, we are
+	 * able to trap inadvertent use of the FPU until the guest FPU state
+	 * has been safely squirreled away.
+	 */
+	vmm_host_cr0 = rcr0() | CR0_TS;
+
+	vmm_host_cr4 = rcr4();
+
+	/*
+	 * Only permit a guest to use XSAVE if the host is using
+	 * XSAVE.  Only permit a guest to use XSAVE features supported
+	 * by the host.  This ensures that the FPU state used by the
+	 * guest is always a subset of the saved guest FPU state.
+	 *
+	 * In addition, only permit known XSAVE features where the
+	 * rules for which features depend on other features is known
+	 * to properly emulate xsetbv.
+	 */
+	if (vmm_host_cr4 & CR4_XSAVE) {
 		vmm_xsave_limits.xsave_enabled = 1;
-		vmm_xsave_limits.xcr0_allowed = XFEATURE_AVX;
+		vmm_host_xcr0 = rxcr(0);
+		vmm_xsave_limits.xcr0_allowed = vmm_host_xcr0 &
+		    (XFEATURE_AVX | XFEATURE_MPX | XFEATURE_AVX512);
+
+		cpuid_count(0xd, 0x0, regs);
 		vmm_xsave_limits.xsave_max_size = regs[1];
 	}
+}
+
+uint64_t
+vmm_get_host_pat(void)
+{
+
+	return (vmm_host_pat);
+}
+
+uint64_t
+vmm_get_host_efer(void)
+{
+
+	return (vmm_host_efer);
+}
+
+uint64_t
+vmm_get_host_cr0(void)
+{
+
+	return (vmm_host_cr0);
+}
+
+uint64_t
+vmm_get_host_cr4(void)
+{
+
+	return (vmm_host_cr4);
+}
+
+uint64_t
+vmm_get_host_xcr0(void)
+{
+
+	return (vmm_host_xcr0);
+}
+
+uint64_t
+vmm_get_host_datasel(void)
+{
+
+	return (GSEL(GDATA_SEL, SEL_KPL));
+
+}
+
+uint64_t
+vmm_get_host_codesel(void)
+{
+
+	return (GSEL(GCODE_SEL, SEL_KPL));
+}
+
+uint64_t
+vmm_get_host_tsssel(void)
+{
+
+	return (GSEL(GPROC0_SEL, SEL_KPL));
+}
+
+uint64_t
+vmm_get_host_fsbase(void)
+{
+
+	return (0);
+}
+
+uint64_t
+vmm_get_host_idtrbase(void)
+{
+
+	return (r_idt.rd_base);
 }
 
 const struct xsave_limits *
 vmm_get_xsave_limits(void)
 {
+
 	return (&vmm_xsave_limits);
 }

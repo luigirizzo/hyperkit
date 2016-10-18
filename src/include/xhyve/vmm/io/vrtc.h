@@ -26,15 +26,11 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _VRTC_H_
+#define	_VRTC_H_
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <time.h>
+#include <isa/isareg.h>
 
-#define IO_RTC 0x070 /* 4990A RTC */
-
-struct vm;
 struct vrtc;
 
 struct vrtc *vrtc_init(struct vm *vm);
@@ -47,6 +43,8 @@ int vrtc_nvram_write(struct vm *vm, int offset, uint8_t value);
 int vrtc_nvram_read(struct vm *vm, int offset, uint8_t *retval);
 
 int vrtc_addr_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
-	uint32_t *val);
+    uint32_t *val);
 int vrtc_data_handler(struct vm *vm, int vcpuid, bool in, int port, int bytes,
-	uint32_t *val);
+    uint32_t *val);
+
+#endif

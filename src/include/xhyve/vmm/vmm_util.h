@@ -26,8 +26,15 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _VMM_UTIL_H_
+#define	_VMM_UTIL_H_
 
 struct trapframe;
 
-void dump_trapframe(struct trapframe *tf);
+boolean_t	vmm_is_intel(void);
+boolean_t	vmm_is_amd(void);
+boolean_t	vmm_supports_1G_pages(void);
+
+void		dump_trapframe(struct trapframe *tf);
+
+#endif

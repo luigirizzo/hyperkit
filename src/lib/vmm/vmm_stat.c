@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,11 +26,17 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
-#include <errno.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/vmm_util.h>
-#include <xhyve/vmm/vmm_stat.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <sys/kernel.h>
+#include <sys/systm.h>
+#include <sys/malloc.h>
+
+#include <machine/vmm.h>
+#include "vmm_util.h"
+#include "vmm_stat.h"
 
 /*
  * 'vst_num_elems' is the total number of addressable statistic elements
@@ -44,6 +49,8 @@
 static int vst_num_elems, vst_num_types;
 static struct vmm_stat_type *vsttab[MAX_VMM_STAT_ELEMS];
 
+static MALLOC_DEFINE(M_VMM_STAT, "vmm stat", "vmm stat");
+
 #define	vst_size	((size_t)vst_num_elems * sizeof(uint64_t))
 
 void
@@ -53,6 +60,12 @@ vmm_stat_register(void *arg)
 
 	/* We require all stats to identify themselves with a description */
 	if (vst->desc == NULL)
+		return;
+
+	if (vst->scope == VMM_STAT_SCOPE_INTEL && !vmm_is_intel())
+		return;
+
+	if (vst->scope == VMM_STAT_SCOPE_AMD && !vmm_is_amd())
 		return;
 
 	if (vst_num_elems + vst->nelems >= MAX_VMM_STAT_ELEMS) {
@@ -95,7 +108,7 @@ void *
 vmm_stat_alloc(void)
 {
 
-	return (malloc(vst_size));
+	return (malloc(vst_size, M_VMM_STAT, M_WAITOK));
 }
 
 void
@@ -108,11 +121,11 @@ vmm_stat_init(void *vp)
 void
 vmm_stat_free(void *vp)
 {
-	free(vp);
+	free(vp, M_VMM_STAT);
 }
 
 int
-vmm_stat_desc_copy(int index, char *buf, size_t bufsize)
+vmm_stat_desc_copy(int index, char *buf, int bufsize)
 {
 	int i;
 	struct vmm_stat_type *vst;
@@ -151,6 +164,7 @@ VMM_STAT(VMEXIT_NESTED_FAULT, "vm exits due to nested page fault");
 VMM_STAT(VMEXIT_INST_EMUL, "vm exits for instruction emulation");
 VMM_STAT(VMEXIT_UNKNOWN, "number of vm exits for unknown reason");
 VMM_STAT(VMEXIT_ASTPENDING, "number of times astpending at exit");
+VMM_STAT(VMEXIT_REQIDLE, "number of times idle requested at exit");
 VMM_STAT(VMEXIT_USERSPACE, "number of vm exits handled in userspace");
 VMM_STAT(VMEXIT_RENDEZVOUS, "number of times rendezvous pending at exit");
 VMM_STAT(VMEXIT_EXCEPTION, "number of vm exits due to exceptions");

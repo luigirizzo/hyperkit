@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,53 +26,129 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <Hypervisor/hv.h>
-#include <Hypervisor/hv_vmx.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm_mem.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/malloc.h>
+#include <sys/sglist.h>
+#include <sys/lock.h>
+#include <sys/rwlock.h>
+
+#include <vm/vm.h>
+#include <vm/vm_param.h>
+#include <vm/pmap.h>
+#include <vm/vm_map.h>
+#include <vm/vm_object.h>
+#include <vm/vm_page.h>
+#include <vm/vm_pager.h>
+
+#include <machine/md_var.h>
+
+#include "vmm_mem.h"
 
 int
 vmm_mem_init(void)
 {
+
 	return (0);
 }
 
-
-void *
-vmm_mem_alloc(uint64_t gpa, size_t size)
+vm_object_t
+vmm_mmio_alloc(struct vmspace *vmspace, vm_paddr_t gpa, size_t len,
+	       vm_paddr_t hpa)
 {
-	void *object;
+	int error;
+	vm_object_t obj;
+	struct sglist *sg;
 
-	object = valloc(size);
+	sg = sglist_alloc(1, M_WAITOK);
+	error = sglist_append_phys(sg, hpa, len);
+	KASSERT(error == 0, ("error %d appending physaddr to sglist", error));
 
-	if (!object) {
-		xhyve_abort("vmm_mem_alloc failed\n");
+	obj = vm_pager_allocate(OBJT_SG, sg, len, VM_PROT_RW, 0, NULL);
+	if (obj != NULL) {
+		/*
+		 * VT-x ignores the MTRR settings when figuring out the
+		 * memory type for translations obtained through EPT.
+		 *
+		 * Therefore we explicitly force the pages provided by
+		 * this object to be mapped as uncacheable.
+		 */
+		VM_OBJECT_WLOCK(obj);
+		error = vm_object_set_memattr(obj, VM_MEMATTR_UNCACHEABLE);
+		VM_OBJECT_WUNLOCK(obj);
+		if (error != KERN_SUCCESS) {
+			panic("vmm_mmio_alloc: vm_object_set_memattr error %d",
+				error);
+		}
+		error = vm_map_find(&vmspace->vm_map, obj, 0, &gpa, len, 0,
+				    VMFS_NO_SPACE, VM_PROT_RW, VM_PROT_RW, 0);
+		if (error != KERN_SUCCESS) {
+			vm_object_deallocate(obj);
+			obj = NULL;
+		}
 	}
 
-	if (hv_vm_map(object, gpa, size,
-		HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC))
-	{
-		xhyve_abort("hv_vm_map failed\n");
+	/*
+	 * Drop the reference on the sglist.
+	 *
+	 * If the scatter/gather object was successfully allocated then it
+	 * has incremented the reference count on the sglist. Dropping the
+	 * initial reference count ensures that the sglist will be freed
+	 * when the object is deallocated.
+	 * 
+	 * If the object could not be allocated then we end up freeing the
+	 * sglist.
+	 */
+	sglist_free(sg);
+
+	return (obj);
+}
+
+void
+vmm_mmio_free(struct vmspace *vmspace, vm_paddr_t gpa, size_t len)
+{
+
+	vm_map_remove(&vmspace->vm_map, gpa, gpa + len);
+}
+
+vm_object_t
+vmm_mem_alloc(struct vmspace *vmspace, vm_paddr_t gpa, size_t len)
+{
+	int error;
+	vm_object_t obj;
+
+	if (gpa & PAGE_MASK)
+		panic("vmm_mem_alloc: invalid gpa %#lx", gpa);
+
+	if (len == 0 || (len & PAGE_MASK) != 0)
+		panic("vmm_mem_alloc: invalid allocation size %lu", len);
+
+	obj = vm_object_allocate(OBJT_DEFAULT, len >> PAGE_SHIFT);
+	if (obj != NULL) {
+		error = vm_map_find(&vmspace->vm_map, obj, 0, &gpa, len, 0,
+				    VMFS_NO_SPACE, VM_PROT_ALL, VM_PROT_ALL, 0);
+		if (error != KERN_SUCCESS) {
+			vm_object_deallocate(obj);
+			obj = NULL;
+		}
 	}
 
-	return object;
+	return (obj);
 }
 
 void
-vmm_mem_free(uint64_t gpa, size_t size, void *object)
+vmm_mem_free(struct vmspace *vmspace, vm_paddr_t gpa, size_t len)
 {
-	hv_vm_unmap(gpa, size);
-	free(object);
+
+	vm_map_remove(&vmspace->vm_map, gpa, gpa + len);
 }
 
-void
-vmm_mem_protect(uint64_t gpa, size_t size) {
-	hv_vm_protect(gpa, size, 0);
-}
+vm_paddr_t
+vmm_mem_maxaddr(void)
+{
 
-void
-vmm_mem_unprotect(uint64_t gpa, size_t size) {
-	hv_vm_protect(gpa, size, (HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC));
+	return (ptoa(Maxmem));
 }

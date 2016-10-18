@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 NetApp, Inc.
- * Copyright (c) 2015 xhyve developers
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -27,12 +26,50 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _VMX_H_
+#define	_VMX_H_
 
-#include <stddef.h>
-#include <xhyve/support/misc.h>
-#include <xhyve/vmm/vmm.h>
-#include <xhyve/vmm/intel/vmcs.h>
+#include "vmcs.h"
+
+struct pmap;
+
+struct vmxctx {
+	register_t	guest_rdi;		/* Guest state */
+	register_t	guest_rsi;
+	register_t	guest_rdx;
+	register_t	guest_rcx;
+	register_t	guest_r8;
+	register_t	guest_r9;
+	register_t	guest_rax;
+	register_t	guest_rbx;
+	register_t	guest_rbp;
+	register_t	guest_r10;
+	register_t	guest_r11;
+	register_t	guest_r12;
+	register_t	guest_r13;
+	register_t	guest_r14;
+	register_t	guest_r15;
+	register_t	guest_cr2;
+
+	register_t	host_r15;		/* Host state */
+	register_t	host_r14;
+	register_t	host_r13;
+	register_t	host_r12;
+	register_t	host_rbp;
+	register_t	host_rsp;
+	register_t	host_rbx;
+	/*
+	 * XXX todo debug registers and fpu state
+	 */
+
+	int		inst_fail_status;
+
+	/*
+	 * The pmap needs to be deactivated in vmx_enter_guest()
+	 * so keep a copy of the 'pmap' in each vmxctx.
+	 */
+	struct pmap	*pmap;
+};
 
 struct vmxcap {
 	int	set;
@@ -40,19 +77,16 @@ struct vmxcap {
 	uint32_t proc_ctls2;
 };
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct vmxstate {
 	uint64_t nextrip;	/* next instruction to be executed by guest */
 	int	lastcpu;	/* host cpu that this 'vcpu' last ran on */
 	uint16_t vpid;
 };
-#pragma clang diagnostic pop
 
 struct apic_page {
-	uint32_t reg[XHYVE_PAGE_SIZE / 4];
+	uint32_t reg[PAGE_SIZE / 4];
 };
-CTASSERT(sizeof(struct apic_page) == XHYVE_PAGE_SIZE);
+CTASSERT(sizeof(struct apic_page) == PAGE_SIZE);
 
 /* Posted Interrupt Descriptor (described in section 29.6 of the Intel SDM) */
 struct pir_desc {
@@ -75,20 +109,32 @@ enum {
 
 /* virtual machine softc */
 struct vmx {
-	struct apic_page apic_page[VM_MAXCPU]; /* one apic page per vcpu */
-	uint64_t guest_msrs[VM_MAXCPU][GUEST_MSR_NUM];
-	struct vmxcap cap[VM_MAXCPU];
-	struct vmxstate state[VM_MAXCPU];
-	struct vm *vm;
+	struct vmcs	vmcs[VM_MAXCPU];	/* one vmcs per virtual cpu */
+	struct apic_page apic_page[VM_MAXCPU];	/* one apic page per vcpu */
+	char		msr_bitmap[PAGE_SIZE];
+	struct pir_desc	pir_desc[VM_MAXCPU];
+	uint64_t	guest_msrs[VM_MAXCPU][GUEST_MSR_NUM];
+	struct vmxctx	ctx[VM_MAXCPU];
+	struct vmxcap	cap[VM_MAXCPU];
+	struct vmxstate	state[VM_MAXCPU];
+	uint64_t	eptp;
+	struct vm	*vm;
+	long		eptgen[MAXCPU];		/* cached pmap->pm_eptgen */
 };
+CTASSERT((offsetof(struct vmx, vmcs) & PAGE_MASK) == 0);
+CTASSERT((offsetof(struct vmx, msr_bitmap) & PAGE_MASK) == 0);
+CTASSERT((offsetof(struct vmx, pir_desc[0]) & 63) == 0);
 
 #define	VMX_GUEST_VMEXIT	0
 #define	VMX_VMRESUME_ERROR	1
 #define	VMX_VMLAUNCH_ERROR	2
 #define	VMX_INVEPT_ERROR	3
+int	vmx_enter_guest(struct vmxctx *ctx, struct vmx *vmx, int launched);
 void	vmx_call_isr(uintptr_t entry);
 
 u_long	vmx_fix_cr0(u_long cr0);
 u_long	vmx_fix_cr4(u_long cr4);
 
 extern char	vmx_exit_guest[];
+
+#endif
