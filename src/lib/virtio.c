@@ -25,14 +25,19 @@
  * SUCH DAMAGE.
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <sys/uio.h>
+
 #include <stdio.h>
 #include <stdint.h>
 #include <pthread.h>
-#include <sys/param.h>
-#include <sys/uio.h>
+
 #include <xhyve.h>
-#include <pci_emul.h>
-#include <virtio.h>
+#include "pci_emul.h"
+#include "virtio.h"
 
 /*
  * Functions for dealing with generalized "virtual devices" as

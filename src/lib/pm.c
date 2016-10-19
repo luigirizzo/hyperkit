@@ -26,17 +26,23 @@
  * SUCH DAMAGE.
  */
 
-#include <stdint.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+//#include <machine/vmm.h>
+
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
 #include <vmm/vmm_api.h>
-#include <acpi.h>
-#include <inout.h>
-#include <mevent.h>
-#include <pci_irq.h>
-#include <pci_lpc.h>
+
+#include "acpi.h"
+#include "inout.h"
+#include "mevent.h"
+#include "pci_irq.h"
+#include "pci_lpc.h"
 
 static pthread_mutex_t pm_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct mevent *power_button;
@@ -81,6 +87,7 @@ static int sci_active;
 static void
 sci_assert(void)
 {
+
 	if (sci_active)
 		return;
 	xh_vm_isa_assert_irq(SCI_INT, SCI_INT);
@@ -90,6 +97,7 @@ sci_assert(void)
 static void
 sci_deassert(void)
 {
+
 	if (!sci_active)
 		return;
 	xh_vm_isa_deassert_irq(SCI_INT, SCI_INT);
@@ -266,6 +274,7 @@ static int
 smi_cmd_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes,
 	uint32_t *eax, UNUSED void *arg)
 {
+
 	assert(!in);
 	if (bytes != 1)
 		return (-1);
@@ -298,6 +307,7 @@ SYSRES_IO(SMI_CMD, 1);
 void
 sci_init(void)
 {
+
 	/*
 	 * Mark ACPI's SCI as level trigger and bump its use count
 	 * in the PIRQ router.

@@ -28,22 +28,27 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
 #include <stdbool.h>
+#include <support/ns16550.h>
+
 #include <stdio.h>
 #include <stdlib.h>
-#include <stddef.h>
-#include <strings.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <pthread.h>
-#include <termios.h>
 #include <assert.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <stddef.h>
+#include <unistd.h>
+#include <string.h>
+#include <pthread.h>
+
 #include <errno.h>
 #include <sys/mman.h>
-#include <support/ns16550.h>
-#include <mevent.h>
-#include <uart_emul.h>
+#include "mevent.h"
+#include "uart_emul.h"
 
 #define	COM1_BASE      	0x3F8
 #define COM1_IRQ	4

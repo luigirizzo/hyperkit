@@ -27,19 +27,23 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+#include <sys/select.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <termios.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include <sys/types.h>
-#include <sys/select.h>
-#include <inout.h>
-#include <pci_lpc.h>
 
-#define	BVM_CONSOLE_PORT 0x220
-#define	BVM_CONS_SIG ('b' << 8 | 'v')
+#include "inout.h"
+#include "pci_lpc.h"
+
+#define	BVM_CONSOLE_PORT	0x220
+#define	BVM_CONS_SIG		('b' << 8 | 'v')
 
 static struct termios tio_orig, tio_new;
 
@@ -55,7 +59,7 @@ ttyopen(void)
 	tcgetattr(STDIN_FILENO, &tio_orig);
 
 	cfmakeraw(&tio_new);
-	tcsetattr(STDIN_FILENO, TCSANOW, &tio_new);
+	tcsetattr(STDIN_FILENO, TCSANOW, &tio_new);	
 
 	atexit(ttyclose);
 }
@@ -63,15 +67,14 @@ ttyopen(void)
 static bool
 tty_char_available(void)
 {
-	fd_set rfds;
-	struct timeval tv;
+        fd_set rfds;
+        struct timeval tv;
 
-	FD_ZERO(&rfds);
-	FD_SET(STDIN_FILENO, &rfds);
-	tv.tv_sec = 0;
-	tv.tv_usec = 0;
-
-	if (select(STDIN_FILENO + 1, &rfds, NULL, NULL, &tv) > 0) {
+        FD_ZERO(&rfds);
+        FD_SET(STDIN_FILENO, &rfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        if (select(STDIN_FILENO + 1, &rfds, NULL, NULL, &tv) > 0) {
 		return (true);
 	} else {
 		return (false);
@@ -124,7 +127,7 @@ console_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes,
 		ttyopen();
 		opened = 1;
 	}
-
+	
 	if (in)
 		*eax = (uint32_t) ttyread();
 	else
@@ -147,5 +150,6 @@ static struct inout_port consport = {
 void
 init_bvmcons(void)
 {
+
 	register_inout(&consport);
 }

@@ -27,10 +27,15 @@
  * $FreeBSD$
  */
 
-#include <stdint.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+
 #include <assert.h>
-#include <inout.h>
-#include <pci_lpc.h>
+
+#include "inout.h"
+#include "pci_lpc.h"
 
 static int
 post_data_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes,

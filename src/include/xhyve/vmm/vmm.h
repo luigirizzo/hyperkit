@@ -26,7 +26,8 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _VMM_H_
+#define	_VMM_H_
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -313,3 +314,5 @@ void vm_inject_pf(void *vm, int vcpuid, int error_code, uint64_t cr2);
 int vm_restart_instruction(void *vm, int vcpuid);
 
 #pragma clang diagnostic pop
+
+#endif	/* _VMM_H_ */
