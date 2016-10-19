@@ -26,6 +26,9 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _DBGPORT_H_
+#define	_DBGPORT_H_
 
-void init_dbgport(int port);
+void	init_dbgport(int port);
+
+#endif

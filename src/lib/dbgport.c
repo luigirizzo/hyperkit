@@ -27,23 +27,26 @@
  * $FreeBSD$
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/uio.h>
 
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
-#include <inout.h>
-#include <dbgport.h>
-#include <pci_lpc.h>
 
-#define	BVM_DBG_PORT 0x224
-#define	BVM_DBG_SIG ('B' << 8 | 'V')
+#include "inout.h"
+#include "dbgport.h"
+#include "pci_lpc.h"
+
+#define	BVM_DBG_PORT	0x224
+#define	BVM_DBG_SIG	('B' << 8 | 'V')
 
 static int listen_fd, conn_fd;
 

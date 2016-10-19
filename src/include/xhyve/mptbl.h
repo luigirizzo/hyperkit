@@ -26,7 +26,10 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _MPTBL_H_
+#define _MPTBL_H_
 
 int mptable_build(int ncpu);
 void mptable_add_oemtbl(void *tbl, int tblsz);
+
+#endif /* _MPTBL_H_ */

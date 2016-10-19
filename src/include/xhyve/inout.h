@@ -26,11 +26,12 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _INOUT_H_
+#define	_INOUT_H_
 
-#include <stdint.h>
 #include <support/linker_set.h>
 
+struct vmctx;
 struct vm_exit;
 
 /*
@@ -42,38 +43,40 @@ typedef int (*inout_func_t)(int vcpu, int in, int port,
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpadded"
 struct inout_port {
-	const char *name;
-	int port;
-	int size;
-	int flags;
-	inout_func_t handler;
-	void *arg;
+	const char	*name;
+	int		port;
+	int		size;
+	int		flags;
+	inout_func_t	handler;
+	void		*arg;
 };
 #pragma clang diagnostic pop
-
-#define IOPORT_F_IN 0x1
-#define IOPORT_F_OUT 0x2
-#define IOPORT_F_INOUT (IOPORT_F_IN | IOPORT_F_OUT)
+#define	IOPORT_F_IN		0x1
+#define	IOPORT_F_OUT		0x2
+#define	IOPORT_F_INOUT		(IOPORT_F_IN | IOPORT_F_OUT)
 
 /*
  * The following flags are used internally and must not be used by
  * device models.
  */
-#define IOPORT_F_DEFAULT 0x80000000 /* claimed by default handler */
+#define	IOPORT_F_DEFAULT	0x80000000	/* claimed by default handler */
 
-#define	INOUT_PORT(name, port, flags, handler) \
-	static struct inout_port __CONCAT(__inout_port, port) = { \
-		#name, \
-		(port), \
-		1, \
-		(flags), \
-		(handler), \
-		0 \
-	}; \
+#define	INOUT_PORT(name, port, flags, handler)				\
+	static struct inout_port __CONCAT(__inout_port, port) = {	\
+		#name,							\
+		(port),							\
+		1,							\
+		(flags),						\
+		(handler),						\
+		0							\
+	};								\
 	DATA_SET(inout_port_set, __CONCAT(__inout_port, port))
 
-void init_inout(void);
-int emulate_inout(int vcpu, struct vm_exit *vmexit, int strict);
-int register_inout(struct inout_port *iop);
-int unregister_inout(struct inout_port *iop);
-void init_bvmcons(void);
+void	init_inout(void);
+int	emulate_inout(int vcpu, struct vm_exit *vmexit,
+		      int strict);
+int	register_inout(struct inout_port *iop);
+int	unregister_inout(struct inout_port *iop);
+void	init_bvmcons(void);
+
+#endif	/* _INOUT_H_ */

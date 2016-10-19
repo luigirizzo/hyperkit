@@ -26,8 +26,14 @@
  * SUCH DAMAGE.
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+
 #include <vmm/vmm_api.h>
-#include <ioapic.h>
+
+#include "ioapic.h"
 
 /*
  * Assign PCI INTx interrupts to I/O APIC pins in a round-robin

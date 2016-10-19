@@ -26,22 +26,26 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef _PCI_EMUL_H_
+#define _PCI_EMUL_H_
 
-#include <stdint.h>
-#include <pthread.h>
-#include <assert.h>
+#include <sys/types.h>
+#include <sys/queue.h>
+#include <sys/kernel.h>
+
 #include <support/pcireg.h>
+
+#include <assert.h>
 #include <support/linker_set.h>
 
-#define PCI_BARMAX PCIR_MAX_BAR_0 /* BAR registers in a Type 0 header */
+#define	PCI_BARMAX	PCIR_MAX_BAR_0	/* BAR registers in a Type 0 header */
 
+struct vmctx;
 struct pci_devinst;
 struct memory_region;
 
 struct pci_devemu {
-	/* name of device emulation */
-	char *pe_emu;
+	char *pe_emu;			/* name of device emulation */
 	/* instance creation */
 	int (*pe_init)(struct pci_devinst *, char *opts);
 	/* ACPI DSDT enumeration */
@@ -71,27 +75,27 @@ enum pcibar_type {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpadded"
 struct pcibar {
-	enum pcibar_type type; /* io or memory */
-	uint64_t size;
-	uint64_t addr;
+	enum pcibar_type	type;	/* io or memory */
+	uint64_t		size;
+	uint64_t		addr;
 };
 #pragma clang diagnostic pop
 
-#define PI_NAMESZ 40
+#define PI_NAMESZ	40
 
 struct msix_table_entry {
-	uint64_t addr;
-	uint32_t msg_data;
-	uint32_t vector_control;
+	uint64_t	addr;
+	uint32_t	 msg_data;
+	uint32_t	 vector_control;
 };
 
-/*
+/* 
  * In case the structure is modified to hold extra information, use a define
  * for the size that should be emulated.
  */
-#define MSIX_TABLE_ENTRY_SIZE 16
-#define MAX_MSIX_TABLE_ENTRIES 2048
-#define PBA_SIZE(msgnum) (roundup2((msgnum), 64) / 8)
+#define	MSIX_TABLE_ENTRY_SIZE	16
+#define MAX_MSIX_TABLE_ENTRIES	2048
+#define	PBA_SIZE(msgnum)	(roundup2((msgnum), 64) / 8)
 
 enum lintr_stat {
 	IDLE,
@@ -103,11 +107,11 @@ enum lintr_stat {
 #pragma clang diagnostic ignored "-Wpadded"
 struct pci_devinst {
 	struct pci_devemu *pi_d;
-	uint8_t pi_bus, pi_slot, pi_func;
-	char pi_name[PI_NAMESZ];
-	int pi_bar_getsize;
-	int pi_prevcap;
-	int pi_capend;
+	uint8_t	pi_bus, pi_slot, pi_func;
+	char	pi_name[PI_NAMESZ];
+	int	 pi_bar_getsize;
+	int	 pi_prevcap;
+	int	 pi_capend;
 
 	struct {
 		int8_t pin;
@@ -275,3 +279,5 @@ pci_get_cfgdata32(struct pci_devinst *pi, int offset)
 	assert(offset <= (PCI_REGMAX - 3) && (offset & 3) == 0);
 	return (*(uint32_t *)(((uintptr_t) &pi->pi_cfgdata) + ((unsigned) offset)));
 }
+
+#endif /* _PCI_EMUL_H_ */
