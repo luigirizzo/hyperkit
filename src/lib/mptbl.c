@@ -34,7 +34,6 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/errno.h>
-#include <support/misc.h>
 #include <support/mptable.h>
 #include <acpi.h>
 #include <xhyve.h>

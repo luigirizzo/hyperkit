@@ -65,7 +65,6 @@
 #include <net/ethernet.h>
 #include <dispatch/dispatch.h>
 #include <vmnet/vmnet.h>
-#include <support/misc.h>
 #include <support/atomic.h>
 #include <support/linker_set.h>
 #include <support/md5.h>

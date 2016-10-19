@@ -75,7 +75,6 @@
 #include <sys/stat.h>
 #include <sys/disk.h>
 #include <sys/queue.h>
-#include <support/misc.h>
 #include <support/segments.h>
 #include <support/specialreg.h>
 #include <vmm/vmm_api.h>

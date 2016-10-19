@@ -32,7 +32,6 @@
 #include <pthread.h>
 #include <errno.h>
 #include <assert.h>
-#include <support/misc.h>
 #include <vmm/vmm_api.h>
 #include <acpi.h>
 #include <inout.h>

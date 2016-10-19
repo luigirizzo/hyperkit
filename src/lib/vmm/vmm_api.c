@@ -32,7 +32,6 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <sys/uio.h>
-#include <support/misc.h>
 #include <support/specialreg.h>
 #include <vmm/vmm.h>
 #include <vmm/vmm_lapic.h>

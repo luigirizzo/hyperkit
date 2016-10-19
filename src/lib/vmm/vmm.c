@@ -34,7 +34,6 @@
 #include <pthread.h>
 #include <assert.h>
 #include <libkern/OSAtomic.h>
-#include <support/misc.h>
 #include <support/atomic.h>
 #include <support/cpuset.h>
 #include <support/psl.h>

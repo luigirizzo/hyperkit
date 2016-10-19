@@ -12,7 +12,6 @@
 #include <sys/un.h>
 #include <sys/uio.h>
 #include <arpa/inet.h>
-#include <support/misc.h>
 #include <support/linker_set.h>
 #include <xhyve.h>
 #include <pci_emul.h>

@@ -28,7 +28,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <assert.h>
-#include <support/misc.h>
 #include <vmm/vmm.h>
 #include <vmm/vmm_callout.h>
 #include <vmm/io/vpmtmr.h>

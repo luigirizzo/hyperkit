@@ -30,7 +30,6 @@
 #pragma once
 
 #include <stddef.h>
-#include <support/misc.h>
 #include <vmm/vmm.h>
 #include <vmm/intel/vmcs.h>
 

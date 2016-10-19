@@ -32,7 +32,6 @@
 #include <errno.h>
 #include <assert.h>
 #include <sys/uio.h>
-#include <support/misc.h>
 #include <support/linker_set.h>
 #include <support/psl.h>
 #include <support/segments.h>

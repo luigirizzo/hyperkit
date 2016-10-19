@@ -31,7 +31,6 @@
 #include <stdlib.h>
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_vmx.h>
-#include <support/misc.h>
 #include <vmm/vmm_mem.h>
 
 int

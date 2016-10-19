@@ -33,7 +33,6 @@
 #include <sys/sysctl.h>
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_vmx.h>
-#include <support/misc.h>
 #include <support/specialreg.h>
 #include <vmm/vmm.h>
 #include <vmm/intel/vmx.h>

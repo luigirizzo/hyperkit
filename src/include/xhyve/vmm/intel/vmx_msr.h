@@ -32,7 +32,6 @@
 #include <stdbool.h>
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_vmx.h>
-#include <support/misc.h>
 
 struct vmx;
 

@@ -32,7 +32,6 @@
 #include <strings.h>
 #include <errno.h>
 #include <assert.h>
-#include <support/misc.h>
 #include <support/atomic.h>
 #include <support/specialreg.h>
 #include <support/apicreg.h>

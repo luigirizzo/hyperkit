@@ -32,7 +32,6 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <assert.h>
-#include <support/misc.h>
 #include <support/apicreg.h>
 #include <vmm/vmm_ktr.h>
 #include <vmm/io/vioapic.h>

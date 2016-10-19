@@ -31,7 +31,6 @@
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
-#include <support/misc.h>
 #include <vmm/vmm_api.h>
 #include <acpi.h>
 #include <inout.h>

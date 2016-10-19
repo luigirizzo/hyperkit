@@ -42,7 +42,6 @@
 #include <sys/uio.h>
 #include <sys/ioctl.h>
 #include <sys/disk.h>
-#include <support/misc.h>
 #include <support/linker_set.h>
 #include <support/md5.h>
 #include <xhyve.h>

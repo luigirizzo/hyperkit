@@ -27,8 +27,6 @@ documentation and/or software.
 
 #pragma once
 
-#include <support/misc.h>
-
 #define MD5_BLOCK_LENGTH 64
 #define MD5_DIGEST_LENGTH 16
 #define MD5_DIGEST_STRING_LENGTH (MD5_DIGEST_LENGTH * 2 + 1)

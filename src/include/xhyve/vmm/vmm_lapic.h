@@ -30,7 +30,6 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <support/misc.h>
 
 struct vm;
 

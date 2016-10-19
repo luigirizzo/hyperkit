@@ -32,7 +32,6 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <assert.h>
-#include <support/misc.h>
 #include <support/acpi_hpet.h>
 #include <vmm/vmm.h>
 #include <vmm/vmm_lapic.h>

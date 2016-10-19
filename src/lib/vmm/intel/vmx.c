@@ -35,7 +35,6 @@
 #include <assert.h>
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_vmx.h>
-#include <support/misc.h>
 #include <support/atomic.h>
 #include <support/psl.h>
 #include <support/specialreg.h>

@@ -29,7 +29,6 @@
 
 #include <stdint.h>
 #include <stdio.h>
-#include <support/misc.h>
 #include <xhyve.h>
 #include <pci_emul.h>
 #include <uart_emul.h>

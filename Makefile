@@ -125,7 +125,7 @@ SRC := \
 
 OBJ := $(SRC:src/%.c=build/%.o) $(OCAML_SRC:src/%.ml=build/%.o)
 DEP := $(OBJ:%.o=%.d)
-INC := -Isrc/include/xhyve
+INC := -Isrc/include/xhyve -include support/misc.h
 
 CFLAGS += -DVERSION=\"$(GIT_VERSION)\" -DVERSION_SHA1=\"$(GIT_VERSION_SHA1)\"
 

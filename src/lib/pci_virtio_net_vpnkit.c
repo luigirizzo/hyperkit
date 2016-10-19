@@ -68,7 +68,6 @@
 #include <sys/time.h>
 #include <net/ethernet.h>
 #include <uuid/uuid.h>
-#include <support/misc.h>
 #include <support/atomic.h>
 #include <support/linker_set.h>
 #include <support/md5.h>

@@ -57,7 +57,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <support/misc.h>
 #include <vmm/vmm_api.h>
 #include <xhyve.h>
 #include <pci_emul.h>

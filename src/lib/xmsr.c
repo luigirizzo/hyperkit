@@ -30,7 +30,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <support/misc.h>
 #include <support/specialreg.h>
 #include <vmm/vmm_api.h>
 #include <xhyve.h>

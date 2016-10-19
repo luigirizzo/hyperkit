@@ -31,7 +31,6 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <assert.h>
-#include <support/misc.h>
 #include <support/pcireg.h>
 #include <support/linker_set.h>
 

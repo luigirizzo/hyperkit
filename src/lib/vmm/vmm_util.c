@@ -28,7 +28,6 @@
  */
 
 #include <stdio.h>
-#include <support/misc.h>
 #include <vmm/vmm_util.h>
 
 struct trapframe {

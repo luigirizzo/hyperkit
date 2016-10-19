@@ -48,7 +48,6 @@
 
 #include <dispatch/dispatch.h>
 
-#include <support/misc.h>
 #include <support/atomic.h>
 #include <support/segments.h>
 #include <support/cpuset.h>

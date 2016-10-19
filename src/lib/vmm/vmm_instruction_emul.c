@@ -32,7 +32,6 @@
 #include <stdbool.h>
 #include <strings.h>
 #include <errno.h>
-#include <support/misc.h>
 #include <support/atomic.h>
 #include <support/psl.h>
 #include <support/specialreg.h>

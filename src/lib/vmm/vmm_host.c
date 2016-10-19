@@ -29,7 +29,6 @@
 
 #include <stdint.h>
 #include <sys/sysctl.h>
-#include <support/misc.h>
 #include <support/specialreg.h>
 #include <vmm/vmm.h>
 #include <vmm/vmm_host.h>

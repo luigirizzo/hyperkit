@@ -27,7 +27,6 @@
  * $FreeBSD$
  */
 
-#include <support/misc.h>
 #include <pci_emul.h>
 
 static int

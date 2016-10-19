@@ -45,7 +45,6 @@
 #include <sys/disk.h>
 #include <sys/queue.h>
 // #include <sys/endian.h>
-#include <support/misc.h>
 #include <support/ata.h>
 #include <support/linker_set.h>
 #include <support/md5.h>

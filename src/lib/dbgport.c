@@ -38,7 +38,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
-#include <support/misc.h>
 #include <inout.h>
 #include <dbgport.h>
 #include <pci_lpc.h>

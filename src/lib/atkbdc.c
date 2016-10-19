@@ -29,7 +29,6 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
-#include <support/misc.h>
 #include <vmm/vmm_api.h>
 #include <inout.h>
 #include <pci_lpc.h>

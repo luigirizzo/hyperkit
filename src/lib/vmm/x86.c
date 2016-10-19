@@ -29,7 +29,6 @@
 
 #include <stdint.h>
 #include <strings.h>
-#include <support/misc.h>
 #include <support/atomic.h>
 #include <support/specialreg.h>
 #include <vmm/vmm.h>

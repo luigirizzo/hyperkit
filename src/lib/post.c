@@ -29,7 +29,6 @@
 
 #include <stdint.h>
 #include <assert.h>
-#include <support/misc.h>
 #include <inout.h>
 #include <pci_lpc.h>
 

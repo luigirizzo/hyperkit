@@ -29,7 +29,6 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <assert.h>
-#include <support/misc.h>
 #include <support/i8259.h>
 #include <support/apicreg.h>
 #include <vmm/vmm_lapic.h>

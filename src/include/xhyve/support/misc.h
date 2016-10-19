@@ -1,4 +1,14 @@
-#pragma once
+/*
+ * Helper functions and macros for bhyve -> hyperkit port
+ *
+ * These map functions available in FreeBSD
+ * to equivalent OSX ones.
+ *
+ * $FreeBSD$
+ */
+
+#ifndef _SUPPORT_MISC_H_
+#define _SUPPORT_MISC_H_
 
 #include <assert.h>
 #include <pthread.h>
@@ -54,6 +64,8 @@ typedef	unsigned short u_short;
 typedef	unsigned int u_int;
 typedef	unsigned long u_long;
 
+struct vmctx;
+
 static inline void cpuid_count(uint32_t ax, uint32_t cx, uint32_t *p) {
 	__asm__ __volatile__ ("cpuid"
 		: "=a" (p[0]), "=b" (p[1]), "=c" (p[2]), "=d" (p[3])
@@ -67,7 +79,7 @@ static inline void do_cpuid(unsigned ax, unsigned *p) {
 }
 
 /* Used to trigger a self-shutdown */
-extern void push_power_button(void);
+void push_power_button(void);
 
 /* Error checking pthread mutex operations */
 static inline void xpthread_mutex_init(pthread_mutex_t *mutex)
@@ -92,3 +104,5 @@ static inline void xpthread_mutex_unlock(pthread_mutex_t *mutex)
 		xhyve_abort("pthread_mutex_unlock failed: %d: %s\n",
 			    rc, strerror(rc));
 }
+
+#endif /* _SUPPORT_MISC_H_ */

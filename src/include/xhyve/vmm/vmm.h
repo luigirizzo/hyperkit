@@ -30,7 +30,6 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <support/misc.h>
 #include <support/cpuset.h>
 #include <support/segments.h>
 #include <vmm/vmm_common.h>

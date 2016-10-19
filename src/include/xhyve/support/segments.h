@@ -37,7 +37,6 @@
 #pragma once
 
 #include <stdint.h>
-#include <support/misc.h>
 
 // /*
 //  * X86 Segmentation Data Structures and definitions

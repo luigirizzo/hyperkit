@@ -34,7 +34,6 @@
 #include <assert.h>
 #include <mach/mach.h>
 #include <mach/clock.h>
-#include <support/misc.h>
 #include <support/rtc.h>
 #include <vmm/vmm.h>
 #include <vmm/vmm_callout.h>

@@ -32,7 +32,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/param.h>
-#include <support/misc.h>
 #include <support/md5.h>
 #include <support/uuid.h>
 #include <vmm/vmm_api.h>

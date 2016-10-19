@@ -43,7 +43,6 @@
 #include <assert.h>
 #include <sys/param.h>
 #include <sys/uio.h>
-#include <support/misc.h>
 #include <support/linker_set.h>
 #include <xhyve.h>
 #include <pci_emul.h>

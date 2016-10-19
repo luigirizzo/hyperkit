@@ -38,7 +38,6 @@
 #include <pthread.h>
 #include <errno.h>
 #include <assert.h>
-#include <support/misc.h>
 #include <support/tree.h>
 #include <vmm/vmm_api.h>
 #include <mem.h>

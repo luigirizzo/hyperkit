@@ -29,7 +29,6 @@
 #pragma once
 
 #include <stdint.h>
-#include <support/misc.h>
 
 #define	__compiler_membar()	__asm __volatile(" " : : : "memory")
 
