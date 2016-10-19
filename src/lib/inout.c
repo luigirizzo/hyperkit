@@ -27,17 +27,30 @@
  * $FreeBSD$
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
+#include <support/linker_set.h>
+#include <sys/uio.h>
+#include <sys/mman.h>
+
+#include <support/psl.h>
+#include <support/segments.h>
+
+// #include <machine/vmm.h>
+// #include <machine/vmm_instruction_emul.h>
+// #include <vmmapi.h>
+
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
-#include <sys/uio.h>
-#include <support/linker_set.h>
 #include <support/psl.h>
 #include <support/segments.h>
 #include <vmm/vmm_api.h>
 #include <xhyve.h>
-#include <inout.h>
+#include "inout.h"
 
 SET_DECLARE(inout_port_set, struct inout_port);
 

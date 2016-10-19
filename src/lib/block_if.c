@@ -27,6 +27,9 @@
  * $FreeBSD$
  */
 
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/errno.h>
@@ -44,9 +47,10 @@
 #include <unistd.h>
 
 #include <support/atomic.h>
+
 #include <xhyve.h>
-#include <mevent.h>
-#include <block_if.h>
+#include "mevent.h"
+#include "block_if.h"
 #include <dtrace.h>
 
 #include "mirage_block_c.h"
@@ -82,33 +86,34 @@ enum blockstat {
 #pragma clang diagnostic ignored "-Wpadded"
 struct blockif_elem {
 	TAILQ_ENTRY(blockif_elem) be_link;
-	struct blockif_req *be_req;
-	enum blockop be_op;
-	enum blockstat be_status;
-	pthread_t be_tid;
-	off_t be_block;
+	struct blockif_req  *be_req;
+	enum blockop	     be_op;
+	enum blockstat	     be_status;
+	pthread_t            be_tid;
+	off_t		     be_block;
 };
 
 struct blockif_ctxt {
-	int bc_magic;
-	char ident[16];
+	int			bc_magic;
+	char			ident[16];
 	/* Only one of fd and bc_mbh may be >= 0 */
-	int bc_fd;
+	int			bc_fd;
 #ifdef HAVE_OCAML_QCOW
-	mirage_block_handle bc_mbh;
+	mirage_block_handle	bc_mbh;
 #endif
-	int bc_ischr;
-	int bc_isgeom;
-	int bc_candelete;
-	int bc_rdonly;
-	off_t bc_size;
-	int bc_sectsz;
-	int bc_psectsz;
-	int bc_psectoff;
-	int bc_closing;
-	pthread_t bc_btid[BLOCKIF_NUMTHR];
-	pthread_mutex_t bc_mtx;
-	pthread_cond_t bc_cond;
+	int			bc_ischr;
+	int			bc_isgeom;
+	int			bc_candelete;
+	int			bc_rdonly;
+	off_t			bc_size;
+	int			bc_sectsz;
+	int			bc_psectsz;
+	int			bc_psectoff;
+	int			bc_closing;
+	pthread_t		bc_btid[BLOCKIF_NUMTHR];
+        pthread_mutex_t		bc_mtx;
+        pthread_cond_t		bc_cond;
+
 	/* Request elements and free/pending/busy queues */
 	TAILQ_HEAD(, blockif_elem) bc_freeq;
 	TAILQ_HEAD(, blockif_elem) bc_pendq;
@@ -119,10 +124,10 @@ struct blockif_ctxt {
 static pthread_once_t blockif_once = PTHREAD_ONCE_INIT;
 
 struct blockif_sig_elem {
-	pthread_mutex_t bse_mtx;
-	pthread_cond_t bse_cond;
-	int bse_pending;
-	struct blockif_sig_elem *bse_next;
+	pthread_mutex_t			bse_mtx;
+	pthread_cond_t			bse_cond;
+	int				bse_pending;
+	struct blockif_sig_elem		*bse_next;
 };
 
 static struct blockif_sig_elem *blockif_bse_head;
@@ -747,6 +752,7 @@ blockif_request(struct blockif_ctxt *bc, struct blockif_req *breq,
 int
 blockif_read(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
+
 	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
 	return (blockif_request(bc, breq, BOP_READ));
 }
@@ -754,6 +760,7 @@ blockif_read(struct blockif_ctxt *bc, struct blockif_req *breq)
 int
 blockif_write(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
+
 	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
 	return (blockif_request(bc, breq, BOP_WRITE));
 }
@@ -761,6 +768,7 @@ blockif_write(struct blockif_ctxt *bc, struct blockif_req *breq)
 int
 blockif_flush(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
+
 	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
 	return (blockif_request(bc, breq, BOP_FLUSH));
 }
@@ -768,6 +776,7 @@ blockif_flush(struct blockif_ctxt *bc, struct blockif_req *breq)
 int
 blockif_delete(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
+
 	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
 	return (blockif_request(bc, breq, BOP_DELETE));
 }
@@ -935,6 +944,7 @@ blockif_chs(struct blockif_ctxt *bc, uint16_t *c, uint8_t *h, uint8_t *s)
 off_t
 blockif_size(struct blockif_ctxt *bc)
 {
+
 	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
 	return (bc->bc_size);
 }
@@ -942,6 +952,7 @@ blockif_size(struct blockif_ctxt *bc)
 int
 blockif_sectsz(struct blockif_ctxt *bc)
 {
+
 	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
 	return (bc->bc_sectsz);
 }
@@ -949,6 +960,7 @@ blockif_sectsz(struct blockif_ctxt *bc)
 void
 blockif_psectsz(struct blockif_ctxt *bc, int *size, int *off)
 {
+
 	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
 	*size = bc->bc_psectsz;
 	*off = bc->bc_psectoff;
@@ -957,6 +969,7 @@ blockif_psectsz(struct blockif_ctxt *bc, int *size, int *off)
 int
 blockif_queuesz(struct blockif_ctxt *bc)
 {
+
 	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
 	return (BLOCKIF_MAXREQ - 1);
 }
@@ -964,6 +977,7 @@ blockif_queuesz(struct blockif_ctxt *bc)
 int
 blockif_is_ro(struct blockif_ctxt *bc)
 {
+
 	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
 	return (bc->bc_rdonly);
 }
@@ -971,6 +985,7 @@ blockif_is_ro(struct blockif_ctxt *bc)
 int
 blockif_candelete(struct blockif_ctxt *bc)
 {
+
 	assert(bc->bc_magic == ((int) BLOCKIF_SIG));
 	return (bc->bc_candelete);
 }

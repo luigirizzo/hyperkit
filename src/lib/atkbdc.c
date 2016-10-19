@@ -25,18 +25,26 @@
  * SUCH DAMAGE.
  */
 
-#include <stdint.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/types.h>
+
+#include <vmm/vmm_api.h>
+
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
-#include <vmm/vmm_api.h>
-#include <inout.h>
-#include <pci_lpc.h>
 
-#define KBD_DATA_PORT 0x60
-#define KBD_STS_CTL_PORT 0x64
-#define KBD_SYS_FLAG 0x4
-#define KBDC_RESET 0xfe
+#include "inout.h"
+#include "pci_lpc.h"
+
+#define	KBD_DATA_PORT		0x60
+
+#define	KBD_STS_CTL_PORT	0x64
+#define	 KBD_SYS_FLAG		0x4
+
+#define	KBDC_RESET		0xfe
 
 static int
 atkbdc_data_handler(UNUSED int vcpu, UNUSED int in, UNUSED int port, int bytes,
@@ -76,5 +84,6 @@ atkbdc_sts_ctl_handler(UNUSED int vcpu, int in, UNUSED int port, int bytes,
 
 INOUT_PORT(atkdbc, KBD_DATA_PORT, IOPORT_F_INOUT, atkbdc_data_handler);
 SYSRES_IO(KBD_DATA_PORT, 1);
-INOUT_PORT(atkbdc, KBD_STS_CTL_PORT,  IOPORT_F_INOUT, atkbdc_sts_ctl_handler);
+INOUT_PORT(atkbdc, KBD_STS_CTL_PORT,  IOPORT_F_INOUT,
+    atkbdc_sts_ctl_handler);
 SYSRES_IO(KBD_STS_CTL_PORT, 1);

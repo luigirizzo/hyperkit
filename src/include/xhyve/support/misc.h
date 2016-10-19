@@ -29,6 +29,10 @@
 #define roundup2(x, y) (((x)+((y)-1))&(~((y)-1))) /* if y is powers of two */
 #define nitems(x) (sizeof((x)) / sizeof((x)[0]))
 #define min(x, y) (((x) < (y)) ? (x) : (y))
+#ifdef __FBSDID
+#undef __FBSDID
+#endif
+#define __FBSDID(x)	extern int __fbsdid
 
 #define xhyve_abort(...) \
 	do { \
