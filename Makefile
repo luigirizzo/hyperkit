@@ -54,6 +54,9 @@ HYPERKIT_LIB_SRC := \
 	src/lib/pci_uart.c \
 	src/lib/pci_virtio_9p.c \
 	src/lib/pci_virtio_block.c \
+	src/lib/net_backends.c \
+	src/lib/net_utils.c \
+	src/lib/pci_virtio_net.c \
 	src/lib/pci_virtio_net_tap.c \
 	src/lib/pci_virtio_net_vmnet.c \
 	src/lib/pci_virtio_net_vpnkit.c \
