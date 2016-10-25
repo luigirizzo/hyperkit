@@ -129,7 +129,6 @@ int ptnetmap_create(struct ptnetmap_state *ptn, struct ptnetmap_cfg *cfg);
 int ptnetmap_delete(struct ptnetmap_state *ptn);
 #endif /* WITH_NETMAP */
 
-
 #include "pci_emul.h"
 int net_parsemac(char *mac_str, uint8_t *mac_addr);
 void net_genmac(struct pci_devinst *pi, uint8_t *macaddr);

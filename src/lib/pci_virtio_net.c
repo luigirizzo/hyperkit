@@ -118,7 +118,6 @@ struct pci_vtnet_softc {
 
 	uint64_t	vsc_features;	/* negotiated features */
 	
-
 	pthread_mutex_t	rx_mtx;
 	unsigned int	rx_vhdrlen;
 	int		rx_merge;	/* merged rx bufs in use */
@@ -286,7 +285,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 		/*
 		 * Release this chain and handle more chains.
 		 */
-		vq_relchain(vq, idx, (uint32_t)(len) + sc->rx_vhdrlen);
+		vq_relchain(vq, idx, (uint32_t)len + sc->rx_vhdrlen);
 	} while (vq_has_descs(vq));
 
 	/* Interrupt if needed, including for NOTIFY_ON_EMPTY. */
@@ -373,7 +372,7 @@ pci_vtnet_tx_thread(void *param)
 	struct vqueue_info *vq;
 	int error;
 
-        pthread_setname_np("vtnet-tx");
+	pthread_setname_np("vtnet-tx");
 	vq = &sc->vsc_queues[VTNET_TXQ];
 
 	/*

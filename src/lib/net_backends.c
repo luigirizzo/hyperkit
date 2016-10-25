@@ -134,8 +134,7 @@ static int
 netbe_null_init(struct net_backend *be, const char *devname,
 			net_backend_cb_t cb, void *param)
 {
-	(void)devname; (void)cb; (void) param;
-	//D("initializing null backend");
+	(void)devname; (void)cb; (void)param;
 	be->fd = -1;
 	return 0;
 }
@@ -144,14 +143,12 @@ static void
 netbe_null_cleanup(struct net_backend *be)
 {
 	(void)be;
-	//D("");
 }
 
 static uint64_t
 netbe_null_get_cap(struct net_backend *be)
 {
 	(void)be;
-	//D("");
 	return 0;
 }
 
@@ -159,8 +156,7 @@ static int
 netbe_null_set_cap(struct net_backend *be, uint64_t features,
 			unsigned vnet_hdr_len)
 {
-	(void)be; (void)features; (void) vnet_hdr_len;
-	//D("setting 0x%lx", features);
+	(void)be; (void)features; (void)vnet_hdr_len;
 	return 0;
 }
 
@@ -168,7 +164,6 @@ static int
 netbe_null_send(struct net_backend *be, struct iovec *iov,
 	int iovcnt, uint32_t len, int more)
 {
-
 	(void)be; (void)iov; (void)iovcnt; (void)len; (void)more;
 	return 0; /* pretend we send */
 }
@@ -917,6 +912,7 @@ netbe_init(const char *devname, net_backend_cb_t cb, void *param)
 	SET_FOREACH(pbe, net_backend_s) {
 		netbe_fix(*pbe); /* make sure we have all fields */
 		if (netbe_name_match((*pbe)->name, devname)) {
+			fprintf(stderr, "--- match backend %s ---\n", (*pbe)->name);
 			be = *pbe;
 			break;
 		}
