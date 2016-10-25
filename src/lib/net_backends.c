@@ -31,6 +31,7 @@
  * features) is exported by net_backends.h.
  */
 
+#define USE_MEVENT 0
 #include <sys/cdefs.h>
 #include <sys/uio.h>
 #include <sys/ioctl.h>
@@ -55,14 +56,6 @@
 #include "net_backends.h"
 
 #include <support/linker_set.h>
-
-#ifdef WITH_NETMAP
-#define NETMAP_WITH_LIBS
-#include <net/netmap_user.h>
-#if (NETMAP_API < 11)
-#error "Netmap API version must be >= 11"
-#endif
-#endif /* WITH_NETMAP */
 
 /*
  * Each network backend registers a set of function pointers that are
@@ -126,6 +119,8 @@ struct net_backend {
 };
 
 SET_DECLARE(net_backend_s, struct net_backend);
+
+#define VNET_HDR_LEN	sizeof(struct virtio_net_rxhdr)
 
 #define WPRINTF(params) printf params
 
@@ -192,7 +187,10 @@ DATA_SET(net_backend_s, n_be);
 /* the tap backend */
 
 struct tap_priv {
-	struct mevent *mevp;
+	struct mevent *mevp; /* USE_MEVENT */
+	pthread_t sthrd; /* !USE_MEVENT */
+	net_backend_cb_t cb;
+	void *cb_param;
 };
 
 static void
@@ -210,6 +208,34 @@ tap_cleanup(struct net_backend *be)
 		be->fd = -1;
 	}
 }
+
+#if !USE_MEVENT
+/* the thread that runs the callback */
+static void *
+pci_vtnet_tap_select_func(void *param)
+{
+        struct net_backend *be = param;
+	struct tap_priv *priv = be->priv;
+        fd_set rfd;
+
+        pthread_setname_np("net:tap:rx");
+
+        assert(be->fd != -1);
+
+        FD_ZERO(&rfd);
+        FD_SET(be->fd, &rfd);
+
+        while (1) {
+                if (select((be->fd + 1), &rfd, NULL, NULL, NULL) == -1) {
+                        abort();
+                }
+		priv->cb(be->fd, EVF_READ, priv->cb_param);
+        }
+
+        return (NULL);
+}
+
+#endif /* !USE_MEVENT */
 
 static int
 tap_init(struct net_backend *be, const char *devname,
@@ -249,14 +275,25 @@ tap_init(struct net_backend *be, const char *devname,
 		goto error;
 	}
 
+	be->fd = fd;
+	be->priv = priv;
+#if USE_MEVENT
 	priv->mevp = mevent_add(fd, EVF_READ, cb, param);
 	if (priv->mevp == NULL) {
 		WPRINTF(("Could not register event\n"));
 		goto error;
 	}
 
-	be->fd = fd;
-	be->priv = priv;
+#else /* !USE_MEVENT */
+	priv->cb = cb;
+	priv->cb_param = param;
+	if (pthread_create(&priv->sthrd, NULL, pci_vtnet_tap_select_func, be)) {
+		WPRINTF(("Could not create tap receive thread\n"));
+		goto error;
+	}
+	/* the callback is run in the thread */
+#endif /* !USE_MEVENT */
+
 
 	return 0;
 
@@ -346,8 +383,6 @@ DATA_SET(net_backend_s, tap_backend);
 		VIRTIO_NET_F_GUEST_TSO6 | VIRTIO_NET_F_GUEST_UFO)
 
 #define NETMAP_POLLMASK (POLLIN | POLLRDNORM | POLLRDBAND)
-
-#define VNET_HDR_LEN	sizeof(struct virtio_net_rxhdr)
 
 struct netmap_priv {
 	char ifname[IFNAMSIZ];
@@ -671,7 +706,7 @@ pkt_copy(const void *_src, void *_dst, int l)
 
 static int
 netmap_send(struct net_backend *be, struct iovec *iov,
-	    int iovcnt, int size, int more)
+	    int iovcnt, uint32_t size, int more)
 {
 	struct netmap_priv *priv = be->priv;
 	struct netmap_ring *ring;
@@ -829,9 +864,173 @@ DATA_SET(net_backend_s, netmap_backend);
 
 #endif /* WITH_NETMAP */
 
-#ifndef VNET_HDR_LEN
-#define VNET_HDR_LEN 14
+#ifdef WITH_VMNET
+
+/* the vmnet backend (ocaml, vmnet) */
+
+static void pci_vtnet_tap_callback(struct pci_vtnet_softc *sc);
+
+/*
+ * Create an interface for the guest using Apple's vmnet framework.
+ *
+ * The interface works in VMNET_SHARED_MODE which allows for packets
+ * of the guest to reach other guests and the Internet.
+ *
+ * See also: https://developer.apple.com/library/mac/documentation/vmnet/Reference/vmnet_Reference/index.html
+ */
+static int
+vmn_create(struct pci_vtnet_softc *sc)
+{
+        xpc_object_t interface_desc;
+        uuid_t uuid;
+        __block interface_ref iface;
+        __block vmnet_return_t iface_status;
+        dispatch_semaphore_t iface_created;
+        dispatch_queue_t if_create_q;
+        dispatch_queue_t if_q;
+        struct vmnet_state *vms;
+        uint32_t uuid_status;
+
+        interface_desc = xpc_dictionary_create(NULL, NULL, 0);
+        xpc_dictionary_set_uint64(interface_desc, vmnet_operation_mode_key,
+                VMNET_SHARED_MODE);
+
+        if (guest_uuid_str != NULL) {
+                uuid_from_string(guest_uuid_str, &uuid, &uuid_status);
+                if (uuid_status != uuid_s_ok) {
+                        return (-1);
+                }
+        } else {
+                uuid_generate_random(uuid);
+        }
+
+        xpc_dictionary_set_uuid(interface_desc, vmnet_interface_id_key, uuid);
+        iface = NULL;
+        iface_status = 0;
+
+        vms = malloc(sizeof(struct vmnet_state));
+
+        if (!vms) {
+                return (-1);
+        }
+
+        if_create_q = dispatch_queue_create("org.xhyve.vmnet.create",
+                DISPATCH_QUEUE_SERIAL);
+
+        iface_created = dispatch_semaphore_create(0);
+
+        iface = vmnet_start_interface(interface_desc, if_create_q,
+                ^(vmnet_return_t status, xpc_object_t interface_param)
+        {
+                iface_status = status;
+                if (status != VMNET_SUCCESS || !interface_param) {
+                        dispatch_semaphore_signal(iface_created);
+                        return;
+                }
+
+                if (sscanf(xpc_dictionary_get_string(interface_param,
+                        vmnet_mac_address_key),
+                        "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+                        &vms->mac[0], &vms->mac[1], &vms->mac[2], &vms->mac[3],
+                        &vms->mac[4], &vms->mac[5]) != 6)
+                {
+                        assert(0);
+                }
+
+                vms->mtu = (unsigned)
+                        xpc_dictionary_get_uint64(interface_param, vmnet_mtu_key);
+                vms->max_packet_size = (unsigned)
+                        xpc_dictionary_get_uint64(interface_param,
+                                vmnet_max_packet_size_key);
+                dispatch_semaphore_signal(iface_created);
+        });
+
+        dispatch_semaphore_wait(iface_created, DISPATCH_TIME_FOREVER);
+        dispatch_release(if_create_q);
+
+        if (iface == NULL || iface_status != VMNET_SUCCESS) {
+                printf("virtio_net: Could not create vmnet interface, "
+                        "permission denied or no entitlement?\n");
+                free(vms);
+                return (-1);
+        }
+
+        vms->iface = iface;
+        sc->vms = vms;
+
+        if_q = dispatch_queue_create("org.xhyve.vmnet.iface_q", 0);
+
+        vmnet_interface_set_event_callback(iface, VMNET_INTERFACE_PACKETS_AVAILABLE,
+                if_q, ^(UNUSED interface_event_t event_id, UNUSED xpc_object_t event)
+        {
+                pci_vtnet_tap_callback(sc);
+        });
+
+        return (0);
+}
+
+
+/*
+ * Called to send a buffer chain out to the tap device
+ */
+static int
+vmnet_send(struct net_backend *be, struct iovec *iov, int iovcnt, uint32_t len,
+	int more)
+{
+	static char pad[60]; /* all zero bytes */
+
+	(void)more;
+	/*
+	 * If the length is < 60, pad out to that and add the
+	 * extra zero'd segment to the iov. It is guaranteed that
+	 * there is always an extra iov available by the caller.
+	 */
+	if (len < 60) {
+		iov[iovcnt].iov_base = pad;
+		iov[iovcnt].iov_len = (size_t)(60 - len);
+		iovcnt++;
+	}
+
+	//return (int)writev(be->fd, iov, iovcnt);
+	// vmn_write(vms, iov, iovcnt);
+#if 0
+	vmnet_return_t r;
+	struct vmpktdesc v;
+	int pktcnt;
+	int i;
+
+	v.vm_pkt_size = 0;
+
+	for (i = 0; i < n; i++) {
+		v.vm_pkt_size += iov[i].iov_len;
+	}
+
+	assert(v.vm_pkt_size <= vms->max_packet_size);
+
+	v.vm_pkt_iov = iov;
+	v.vm_pkt_iovcnt = (uint32_t) n;
+	v.vm_flags = 0; /* TODO no clue what this is */
+
+	pktcnt = 1;
+
+	r = vmnet_write(vms->iface, &v, &pktcnt);
+
+	assert(r == VMNET_SUCCESS);
 #endif
+}
+
+static struct net_backend vmnet_backend = {
+	.name = "vmnet",
+	.init = vmnet_create,
+	.cleanup = vmnet_cleanup,
+	.send = vmnet_send,
+	.recv = vmnet_recv,
+	.get_cap = vmnet_get_cap,
+	.set_cap = vmnet_set_cap,
+};
+
+DATA_SET(net_backend_s, vmnet_backend);
+#endif /* WITH_VMNET */
 
 /*
  * make sure a backend is properly initialized

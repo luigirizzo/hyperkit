@@ -28,10 +28,17 @@
 #define __NET_BACKENDS_H__
 
 #include <stdint.h>
+
 #ifdef WITH_NETMAP
 #include <net/netmap.h>
 #include <net/netmap_virt.h>
+#define NETMAP_WITH_LIBS
+#include <net/netmap_user.h>
+#if (NETMAP_API < 11)
+#error "Netmap API version must be >= 11"
+#endif
 #endif /* WITH_NETMAP */
+
 #include "mevent.h"
 
 extern int netmap_ioctl_counter;
@@ -108,6 +115,7 @@ struct ptnetmap_state {
 	void		*mem;
 };
 
+#ifdef WITH_NETMAP
 /* Used to get read-only info. */
 struct netmap_if_info {
 	uint32_t nifp_offset;
@@ -117,7 +125,6 @@ struct netmap_if_info {
 	uint16_t num_rx_slots;
 };
 
-#ifdef WITH_NETMAP
 int ptn_memdev_attach(void *mem_ptr, struct netmap_pools_info *);
 int ptnetmap_get_netmap_if(struct ptnetmap_state *ptn,
 			   struct netmap_if_info *nif);
