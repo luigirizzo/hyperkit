@@ -45,7 +45,7 @@ struct pci_devinst;
 struct memory_region;
 
 struct pci_devemu {
-	char *pe_emu;			/* name of device emulation */
+	char *pe_emu;			/* Name of device emulation */
 	/* instance creation */
 	int (*pe_init)(struct pci_devinst *, char *opts);
 	/* ACPI DSDT enumeration */
@@ -62,7 +62,7 @@ struct pci_devemu {
 		uint64_t offset, int size);
 };
 
-#define PCI_EMUL_SET(x) DATA_SET(pci_devemu_set, x)
+#define PCI_EMUL_SET(x)		DATA_SET(pci_devemu_set, x)
 
 enum pcibar_type {
 	PCIBAR_NONE,
@@ -72,14 +72,11 @@ enum pcibar_type {
 	PCIBAR_MEMHI64
 };
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct pcibar {
 	enum pcibar_type	type;	/* io or memory */
 	uint64_t		size;
 	uint64_t		addr;
 };
-#pragma clang diagnostic pop
 
 #define PI_NAMESZ	40
 
@@ -87,7 +84,7 @@ struct msix_table_entry {
 	uint64_t	addr;
 	uint32_t	 msg_data;
 	uint32_t	 vector_control;
-};
+} __packed;
 
 /* 
  * In case the structure is modified to hold extra information, use a define
@@ -103,8 +100,6 @@ enum lintr_stat {
 	PENDING
 };
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct pci_devinst {
 	struct pci_devemu *pi_d;
 	uint8_t	pi_bus, pi_slot, pi_func;
@@ -145,10 +140,7 @@ struct pci_devinst {
 	u_char pi_cfgdata[PCI_REGMAX + 1];
 	struct pcibar pi_bar[PCI_BARMAX + 1];
 };
-#pragma clang diagnostic pop
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpacked"
 struct msicap {
 	uint8_t capid;
 	uint8_t nextptr;
@@ -199,7 +191,6 @@ struct pciecap {
 	uint16_t slot_control2;
 	uint16_t slot_status2;
 } __packed;
-#pragma clang diagnostic pop
 
 typedef void (*pci_lintr_cb)(int b, int s, int pin, int pirq_pin,
 	int ioapic_irq, void *arg);

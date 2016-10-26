@@ -27,7 +27,8 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	__UUID_H_
+#define	__UUID_H_
 
 #include <stdint.h>
 #include <stdio.h>
@@ -35,8 +36,6 @@
 
 #define	_UUID_NODE_LEN 6
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct uuid {
 	uint32_t time_low;
 	uint16_t time_mid;
@@ -45,7 +44,6 @@ struct uuid {
 	uint8_t clock_seq_low;
 	uint8_t node[_UUID_NODE_LEN];
 };
-#pragma clang diagnostic pop
 
 typedef struct uuid uuid_internal_t;
 
@@ -151,3 +149,5 @@ uuid_from_string(const char *s, uuid_t *uuid, uint32_t *status)
 			*status = uuid_s_ok;
 	}
 }
+
+#endif	/* __UUID_H_ */

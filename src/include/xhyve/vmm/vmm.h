@@ -35,9 +35,6 @@
 #include <support/segments.h>
 #include <vmm/vmm_common.h>
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
-
 #define	VM_INTINFO_VECTOR(info)	((info) & 0xff)
 #define	VM_INTINFO_DEL_ERRCODE	0x800
 #define	VM_INTINFO_RSVD		0x7ffff000
@@ -312,7 +309,5 @@ vm_inject_ss(void *vm, int vcpuid, int errcode)
 void vm_inject_pf(void *vm, int vcpuid, int error_code, uint64_t cr2);
 
 int vm_restart_instruction(void *vm, int vcpuid);
-
-#pragma clang diagnostic pop
 
 #endif	/* _VMM_H_ */

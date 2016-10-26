@@ -95,7 +95,7 @@ struct virtio_net_rxhdr {
 	uint16_t	vrh_csum_start;
 	uint16_t	vrh_csum_offset;
 	uint16_t	vrh_bufs;
-} /* __packed */ ;
+} __packed;
 
 /*
  * ptnetmap definitions

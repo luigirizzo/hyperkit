@@ -26,7 +26,8 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	_VMM_API_H_
+#define	_VMM_API_H_
 
 #include <stdint.h>
 #include <sys/time.h>
@@ -112,3 +113,5 @@ int xh_vm_restart_instruction(int vcpu);
 int xh_vm_emulate_instruction(int vcpu, uint64_t gpa, struct vie *vie,
 	struct vm_guest_paging *paging, mem_region_read_t memread,
 	mem_region_write_t memwrite, void *memarg);
+
+#endif	/* _VMM_API_H_ */

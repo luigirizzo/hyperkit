@@ -26,24 +26,25 @@
  * $FreeBSD$
  */
 
-#pragma once
-
-#include <stdint.h>
+#ifndef	_ACPI_H_
+#define	_ACPI_H_
 
 /* if set, create AML instead of ASL and calling out to iasl */
 #define ACPITBL_AML 1
 
-#define SCI_INT 9
+#define	SCI_INT			9
 
-#define SMI_CMD 0xb2
-#define BHYVE_ACPI_ENABLE 0xa0
-#define BHYVE_ACPI_DISABLE 0xa1
+#define	SMI_CMD 0xb2
+#define	BHYVE_ACPI_ENABLE	0xa0
+#define	BHYVE_ACPI_DISABLE	0xa1
 
-#define PM1A_EVT_ADDR 0x400
-#define PM1A_EVT_ADDR2 0x402
-#define PM1A_CNT_ADDR 0x404
+#define	PM1A_EVT_ADDR		0x400
+#define	PM1A_EVT_ADDR2		0x402
+#define	PM1A_CNT_ADDR		0x404
 
-#define IO_PMTMR 0x408 /* 4-byte i/o port for the timer */
+#define	IO_PMTMR		0x408	/* 4-byte i/o port for the timer */
+
+struct vmctx;
 
 int acpi_build(int ncpu);
 void dsdt_line(const char *fmt, ...);
@@ -55,3 +56,5 @@ void dsdt_unindent(int levels);
 void dsdt_fixup(int bus, uint16_t iobase, uint16_t iolimit, uint32_t membase32,
 	uint32_t memlimit32, uint64_t membase64, uint64_t memlimit64);
 void sci_init(void);
+
+#endif	/* _ACPI_H_ */

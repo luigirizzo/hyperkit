@@ -26,7 +26,8 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	_UART_EMUL_H_
+#define	_UART_EMUL_H_
 
 #define	UART_IO_BAR_SIZE 8
 
@@ -40,3 +41,5 @@ int uart_legacy_alloc(int unit, int *ioaddr, int *irq);
 uint8_t uart_read(struct uart_softc *sc, int offset);
 void uart_write(struct uart_softc *sc, int offset, uint8_t value);
 int uart_set_backend(struct uart_softc *sc, const char *backend, const char *devname);
+
+#endif	/* _UART_EMUL_H_ */

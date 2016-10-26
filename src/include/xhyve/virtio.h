@@ -26,7 +26,8 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	_VIRTIO_H_
+#define	_VIRTIO_H_
 
 #include <stdint.h>
 #include <pthread.h>
@@ -127,9 +128,6 @@
 #define VRING_DESC_F_WRITE	(1 << 1)
 #define VRING_DESC_F_INDIRECT	(1 << 2)
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpacked"
-
 struct virtio_desc { /* AKA vring_desc */
 	uint64_t vd_addr; /* guest physical address */
 	uint32_t vd_len; /* length of scatter/gather seg */
@@ -158,8 +156,6 @@ struct vring_used {
 	struct virtio_used vu_ring[]; /* size N */
 /*	uint16_t vu_avail_event; -- after N ring entries */
 } __packed;
-
-#pragma clang diagnostic pop
 
 /*
  * The address of any given virtual queue is determined by a single
@@ -325,9 +321,6 @@ struct vqueue_info;
 #define	VIRTIO_EVENT_IDX	0x02	/* use the event-index values */
 #define	VIRTIO_BROKED		0x08	/* ??? */
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
-
 struct virtio_softc {
 	struct virtio_consts *vs_vc; /* constants (see below) */
 	int vs_flags; /* VIRTIO_* flags from above */
@@ -420,8 +413,6 @@ struct vqueue_info {
 	volatile struct vring_used *vq_used;
 };
 
-#pragma clang diagnostic pop
-
 /* as noted above, these are sort of backwards, name-wise */
 #define VQ_AVAIL_EVENT_IDX(vq) \
 	(*(volatile uint16_t *)&(vq)->vq_used->vu_ring[(vq)->vq_qsize])
@@ -481,3 +472,4 @@ uint64_t vi_pci_read(int vcpu, struct pci_devinst *pi, int baridx,
 	uint64_t offset, int size);
 void vi_pci_write(int vcpu, struct pci_devinst *pi, int baridx, uint64_t offset,
 	int size, uint64_t value);
+#endif	/* _VIRTIO_H_ */

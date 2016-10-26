@@ -26,7 +26,8 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	_XHYVE_H_
+#define	_XHYVE_H_
 
 #include <stdint.h>
 #include <support/segments.h>
@@ -79,3 +80,5 @@ void vcpu_add(int fromcpu, int newcpu, uint64_t rip);
 int fbsdrun_vmexit_on_hlt(void);
 int fbsdrun_vmexit_on_pause(void);
 int fbsdrun_virtio_msix(void);
+
+#endif	/* _XHYVE_H_ */

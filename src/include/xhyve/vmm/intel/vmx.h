@@ -27,7 +27,8 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	_VMX_H_
+#define	_VMX_H_
 
 #include <stddef.h>
 #include <vmm/vmm.h>
@@ -39,14 +40,11 @@ struct vmxcap {
 	uint32_t proc_ctls2;
 };
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct vmxstate {
 	uint64_t nextrip;	/* next instruction to be executed by guest */
 	int	lastcpu;	/* host cpu that this 'vcpu' last ran on */
 	uint16_t vpid;
 };
-#pragma clang diagnostic pop
 
 struct apic_page {
 	uint32_t reg[XHYVE_PAGE_SIZE / 4];
@@ -91,3 +89,5 @@ u_long	vmx_fix_cr0(u_long cr0);
 u_long	vmx_fix_cr4(u_long cr4);
 
 extern char	vmx_exit_guest[];
+
+#endif	/*_VMX_H_ */

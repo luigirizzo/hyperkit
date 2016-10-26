@@ -30,7 +30,8 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	_VMM_STAT_H_
+#define	_VMM_STAT_H_
 
 #include <stdint.h>
 
@@ -48,8 +49,6 @@ struct vmm_stat_type;
 typedef void (*vmm_stat_func_t)(struct vm *vm, int vcpu,
     struct vmm_stat_type *stat);
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct vmm_stat_type {
 	int	index;			/* position in the stats buffer */
 	int	nelems;			/* standalone or array */
@@ -57,7 +56,6 @@ struct vmm_stat_type {
 	vmm_stat_func_t func;
 	enum vmm_stat_scope scope;
 };
-#pragma clang diagnostic pop
 
 void	vmm_stat_register(void *arg);
 
@@ -183,3 +181,5 @@ VMM_STAT_DECLARE(VMEXIT_ASTPENDING);
 VMM_STAT_DECLARE(VMEXIT_USERSPACE);
 VMM_STAT_DECLARE(VMEXIT_RENDEZVOUS);
 VMM_STAT_DECLARE(VMEXIT_EXCEPTION);
+
+#endif	/* _VMM_STAT_H_ */

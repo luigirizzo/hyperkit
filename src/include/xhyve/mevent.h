@@ -26,7 +26,8 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	_MEVENT_H_
+#define	_MEVENT_H_
 
 enum ev_type {
 	EVF_READ,
@@ -38,10 +39,13 @@ enum ev_type {
 struct mevent;
 
 struct mevent *mevent_add(int fd, enum ev_type type,
-	void (*func)(int, enum ev_type, void *), void *param);
+			void (*func)(int, enum ev_type, void *),
+			void *param);
 int mevent_enable(struct mevent *evp);
 int mevent_disable(struct mevent *evp);
 int mevent_delete(struct mevent *evp);
 int mevent_delete_close(struct mevent *evp);
 
 void mevent_dispatch(void);
+
+#endif	/* _MEVENT_H_ */

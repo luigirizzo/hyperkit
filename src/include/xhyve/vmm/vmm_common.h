@@ -26,12 +26,10 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	_VMM_COMMON_H_
+#define	_VMM_COMMON_H_
 
 #include <stdint.h>
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 
 #define	VM_MAXCPU 16 /* maximum virtual cpus */
 
@@ -319,4 +317,4 @@ int vie_calculate_gla(enum vm_cpu_mode cpu_mode, enum vm_reg_name seg,
 int vie_alignment_check(int cpl, int operand_size, uint64_t cr0,
 	uint64_t rflags, uint64_t gla);
 
-#pragma clang diagnostic pop
+#endif	/* _VMM_COMMON_H_ */

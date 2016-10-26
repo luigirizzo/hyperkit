@@ -26,11 +26,8 @@
  * $FreeBSD$
  */
 
-#pragma once
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
-#pragma clang diagnostic ignored "-Wpacked"
+#ifndef	_ATA_H_
+#define	_ATA_H_
 
 /* ATA/ATAPI device parameters */
 struct ata_params {
@@ -638,4 +635,5 @@ struct ata_ioc_raid_status {
 #define IOCATARAIDADDSPARE      _IOW('a', 203, struct ata_ioc_raid_config)
 #define IOCATARAIDREBUILD       _IOW('a', 204, int)
 
-#pragma clang diagnostic pop
+#endif	/* _ATA_H_ */
+

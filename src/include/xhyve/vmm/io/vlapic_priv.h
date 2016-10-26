@@ -26,7 +26,8 @@
  * $FreeBSD$
  */
 
-#pragma once
+#ifndef	_VLAPIC_PRIV_H_
+#define	_VLAPIC_PRIV_H_
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -187,3 +188,5 @@ struct vlapic {
 
 void vlapic_init(struct vlapic *vlapic);
 void vlapic_cleanup(struct vlapic *vlapic);
+
+#endif	/* _VLAPIC_PRIV_H_ */

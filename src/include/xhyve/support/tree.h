@@ -27,10 +27,8 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
+#ifndef	_TREE_H_
+#define	_TREE_H_
 
 /*
  * This file defines data structures for different types of trees:
@@ -748,4 +746,4 @@ name##_RB_MINMAX(struct name *head, int val)				\
 	     (x) != NULL;						\
 	     (x) = name##_RB_PREV(x))
 
-#pragma clang diagnostic pop
+#endif	/* _TREE_H_ */

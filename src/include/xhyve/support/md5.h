@@ -25,21 +25,19 @@ These notices must be retained in any copies of any part of this
 documentation and/or software.
  */
 
-#pragma once
+#ifndef	_MD5_H_
+#define	_MD5_H_
 
 #define MD5_BLOCK_LENGTH 64
 #define MD5_DIGEST_LENGTH 16
 #define MD5_DIGEST_STRING_LENGTH (MD5_DIGEST_LENGTH * 2 + 1)
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 /* MD5 context. */
 typedef struct MD5Context {
   u_int32_t state[4];	/* state (ABCD) */
   u_int32_t count[2];	/* number of bits, modulo 2^64 (lsb first) */
   unsigned char buffer[64];	/* input buffer */
 } MD5_CTX;
-#pragma clang diagnostic pop
 
 void MD5Init(MD5_CTX *);
 void MD5Update(MD5_CTX *, const void *, unsigned int);
@@ -48,3 +46,5 @@ char * MD5End(MD5_CTX *, char *);
 char * MD5File(const char *, char *);
 char * MD5FileChunk(const char *, char *, off_t, off_t);
 char * MD5Data(const void *, unsigned int, char *);
+
+#endif	/* _MD5_H_ */
