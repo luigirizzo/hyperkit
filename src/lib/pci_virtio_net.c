@@ -29,6 +29,17 @@
 /*
  * This file contains the emulation of the virtio-net network frontend. Network
  * backends are in net_backends.c.
+ *
+ * The frontend is selected using the pe_emu field of the descriptor,
+ * Upon a match, the pe_init function is invoked, which initializes
+ * the emulated PCI device, attaches to the backend, and calls virtio
+ * initialization functions.
+ *
+ * PCI register read/writes are handled through generic PCI methods
+ *
+ * virtio TX is handled by a dedicated thread, pci_vtnet_tx_thread()
+ * virtio RX is handled by the backend (often with some helper thread),
+ * 	which in turn calls a frontend callback, pci_vtnet_rx_callback()
  */
 
 #include <sys/cdefs.h>
@@ -150,6 +161,7 @@ static struct virtio_consts vtnet_vi_consts = {
 
 /*
  * If the transmit thread is active then stall until it is done.
+ * Only used once in pci_vtnet_reset()
  */
 static void
 pci_vtnet_txwait(struct pci_vtnet_softc *sc)
@@ -167,6 +179,7 @@ pci_vtnet_txwait(struct pci_vtnet_softc *sc)
 /*
  * If the receive thread is active then stall until it is done.
  * It is enough to lock and unlock the RX mutex.
+ * Only used once in pci_vtnet_reset()
  */
 static void
 pci_vtnet_rxwait(struct pci_vtnet_softc *sc)
@@ -176,6 +189,7 @@ pci_vtnet_rxwait(struct pci_vtnet_softc *sc)
 	pthread_mutex_unlock(&sc->rx_mtx);
 }
 
+/* handler for virtio_reset */
 static void
 pci_vtnet_reset(void *vsc)
 {
@@ -202,14 +216,6 @@ pci_vtnet_reset(void *vsc)
 	sc->resetting = 0;
 }
 
-/*
- *  Called when there is read activity on the tap file descriptor.
- * Each buffer posted by the guest is assumed to be able to contain
- * an entire ethernet frame + rx header.
- *  MP note: the dummybuf is only used for discarding frames, so there
- * is no need for it to be per-vtnet or locked.
- */
-
 static void
 pci_vtnet_rx_discard(struct pci_vtnet_softc *sc, struct iovec *iov)
 {
@@ -233,26 +239,20 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 	int len, n;
 	uint16_t idx;
 
-	/*
-	 * This will be called when the rx ring hasn't yet
-	 * been set up or the guest is resetting the device.
-	 */
 	if (!sc->vsc_rx_ready || sc->resetting) {
 		/*
-		 * Drop the packet and try later.
+		 * The rx ring has not yet been set up or the guest is
+		 * resetting the device. Drop the packet and try later.
 		 */
 		pci_vtnet_rx_discard(sc, iov);
 		return;
 	}
 
-	/*
-	 * Check for available rx buffers
-	 */
 	vq = &sc->vsc_queues[VTNET_RXQ];
 	if (!vq_has_descs(vq)) {
 		/*
-		 * Drop the packet and try later.  Interrupt on
-		 * empty, if that's negotiated.
+		 * No available rx buffers. Drop the packet and try later.
+		 * Interrupt on empty, if that's negotiated.
 		 */
 		pci_vtnet_rx_discard(sc, iov);
 		vq_endchains(vq, 1);
@@ -260,9 +260,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 	}
 
 	do {
-		/*
-		 * Get descriptor chain.
-		 */
+		/* Get descriptor chain into iov */
 		n = vq_getchain(vq, &idx, iov, VTNET_MAXSEGS, NULL);
 		assert(n >= 1 && n <= VTNET_MAXSEGS);
 
@@ -277,14 +275,13 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			 * No more packets, but still some avail ring
 			 * entries.  Interrupt if needed/appropriate.
 			 */
-			vq_retchain(vq);
-			vq_endchains(vq, 0);
+			vq_retchain(vq); /* return the slot to the vq */
+			vq_endchains(vq, 0 /* XXX why 0 ? */);
 			return;
 		}
 
-		/*
-		 * Release this chain and handle more chains.
-		 */
+		/* Publish the info to the guest */
+		// XXX check why we add rx_vhdrlen
 		vq_relchain(vq, idx, (uint32_t)len + sc->rx_vhdrlen);
 	} while (vq_has_descs(vq));
 
@@ -292,6 +289,11 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 	vq_endchains(vq, 1);
 }
 
+/*
+ * Called when there is read activity on the tap file descriptor.
+ * Each buffer posted by the guest is assumed to be able to contain
+ * an entire ethernet frame + rx header.
+ */
 static void
 pci_vtnet_rx_callback(int fd, enum ev_type type, void *param)
 {
@@ -301,9 +303,9 @@ pci_vtnet_rx_callback(int fd, enum ev_type type, void *param)
 	pthread_mutex_lock(&sc->rx_mtx);
 	pci_vtnet_rx(sc);
 	pthread_mutex_unlock(&sc->rx_mtx);
-
 }
 
+/* callback when writing to the PCI register */
 static void
 pci_vtnet_ping_rxq(void *vsc, struct vqueue_info *vq)
 {
@@ -318,6 +320,7 @@ pci_vtnet_ping_rxq(void *vsc, struct vqueue_info *vq)
 	}
 }
 
+/* TX processing (guest to host), called in the tx thread */
 static void
 pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 {
@@ -343,6 +346,7 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 	vq_relchain(vq, idx, len);
 }
 
+/* callback when writing to the PCI register */
 static void
 pci_vtnet_ping_txq(void *vsc, struct vqueue_info *vq)
 {
@@ -436,7 +440,9 @@ pci_vtnet_init(/* struct vmctx *ctx, */ struct pci_devinst *pi, char *opts)
 	int mac_provided;
 	struct virtio_consts *vc;
 
-	/* sc also contains a copy of the vtnet_vi_consts,
+	/*
+	 * Allocate data structures for further virtio initializations.
+	 * sc also contains a copy of the vtnet_vi_consts,
 	 * because the capabilities change depending on
 	 * the backend.
 	 */
@@ -447,6 +453,7 @@ pci_vtnet_init(/* struct vmctx *ctx, */ struct pci_devinst *pi, char *opts)
 
 	pthread_mutex_init(&sc->vsc_mtx, NULL);
 
+	// XXX can we move vi_softc_linkup before vi_intr_init ?
 	vi_softc_linkup(&sc->vsc_vs, vc, sc, pi, sc->vsc_queues);
 	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
 
@@ -508,7 +515,7 @@ pci_vtnet_init(/* struct vmctx *ctx, */ struct pci_devinst *pi, char *opts)
 		return (1);
 
 	/* use BAR 0 to map config regs in IO space */
-	vi_set_io_bar(&sc->vsc_vs, 0);
+	vi_set_io_bar(&sc->vsc_vs, 0);	/* calls into virtio */
 
 	sc->resetting = 0;
 
@@ -538,8 +545,8 @@ pci_vtnet_cfgwrite(void *vsc, int offset, int size, uint32_t value)
 	struct pci_vtnet_softc *sc = vsc;
 	void *ptr;
 
-	if (offset < 6) {
-		assert(offset + size <= 6);
+	if (offset < (int)sizeof(sc->vsc_config.mac)) {
+		assert(offset + size <= (int)sizeof(sc->vsc_config.mac));
 		/*
 		 * The driver is allowed to change the MAC address
 		 */

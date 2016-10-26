@@ -31,6 +31,7 @@
  * features) is exported by net_backends.h.
  */
 
+//#define WITH_VMNET
 #define USE_MEVENT 0
 #include <sys/cdefs.h>
 #include <sys/uio.h>
@@ -56,6 +57,11 @@
 #include "net_backends.h"
 
 #include <support/linker_set.h>
+#ifdef WITH_VMNET
+#include <support/uuid.h>
+#include <dispatch/dispatch.h>
+#include <vmnet/vmnet.h>
+#endif /* WITH_VMNET */
 
 /*
  * Each network backend registers a set of function pointers that are
@@ -879,8 +885,9 @@ static void pci_vtnet_tap_callback(struct pci_vtnet_softc *sc);
  * See also: https://developer.apple.com/library/mac/documentation/vmnet/Reference/vmnet_Reference/index.html
  */
 static int
-vmn_create(struct pci_vtnet_softc *sc)
+vmnet_init(const char *devname, net_backend_cb_t cb, void *param)
 {
+	struct pci_vtnet_softc *sc;
         xpc_object_t interface_desc;
         uuid_t uuid;
         __block interface_ref iface;
@@ -1021,12 +1028,12 @@ vmnet_send(struct net_backend *be, struct iovec *iov, int iovcnt, uint32_t len,
 
 static struct net_backend vmnet_backend = {
 	.name = "vmnet",
-	.init = vmnet_create,
+	.init = vmnet_init,
 	.cleanup = vmnet_cleanup,
 	.send = vmnet_send,
 	.recv = vmnet_recv,
-	.get_cap = vmnet_get_cap,
-	.set_cap = vmnet_set_cap,
+	.get_cap = netbe_get_cap,
+	.set_cap = netbe_set_cap,
 };
 
 DATA_SET(net_backend_s, vmnet_backend);
@@ -1098,18 +1105,28 @@ netbe_name_match(const char *keys, const char *name)
 	return good;
 }
 
+/*
+ * Initialize a backend and attach to the frontend.
+ * This is called during frontend initialization.
+ * devname is the backend-name as supplied on the command line,
+ * 	e.g. -s 2:0,frontend-name,backend-name[,other-args]
+ * cb is the receive callback supplied by the frontend,
+ *	and it is invoked in the event loop when a receive
+ *	event is generated in the hypervisor,
+ * param is a pointer to the frontend, and normally used as
+ *	the argument for the callback.
+ */
 struct net_backend *
 netbe_init(const char *devname, net_backend_cb_t cb, void *param)
 {
-	/*
-	 * Choose the network backend depending on the user
-	 * provided device name.
-	 */
 	struct net_backend **pbe, *ret, *be = NULL;
 	int err;
 
+	/*
+	 * Find the network backend depending on the user-provided
+	 * device name. net_backend_s is built using a linker set.
+	 */
 	SET_FOREACH(pbe, net_backend_s) {
-		netbe_fix(*pbe); /* make sure we have all fields */
 		if (netbe_name_match((*pbe)->name, devname)) {
 			fprintf(stderr, "--- match backend %s ---\n", (*pbe)->name);
 			be = *pbe;
@@ -1119,14 +1136,16 @@ netbe_init(const char *devname, net_backend_cb_t cb, void *param)
 	if (be == NULL)
 		return NULL; /* or null backend ? */
 	ret = calloc(1, sizeof(*ret));
-	*ret = *be;
+	*ret = *be;	/* copy the template */
+	netbe_fix(ret); /* make sure we have all fields */
 	ret->fd = -1;
 	ret->priv = NULL;
 	ret->sc = param;
 	ret->be_vnet_hdr_len = 0;
 	ret->fe_vnet_hdr_len = 0;
 
-	err = be->init(ret, devname, cb, param);
+	/* initialize the backend */
+	err = ret->init(ret, devname, cb, param);
 	if (err) {
 		free(ret);
 		ret = NULL;
