@@ -40,6 +40,7 @@ CFLAGS_WARN := \
   -Wno-dollar-in-identifier-extension \
   -Wno-gnu-statement-expression \
   -Wno-padded \
+  -Wno-packed \
   -pedantic
 
 CFLAGS_DIAG := \
