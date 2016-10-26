@@ -26,18 +26,25 @@
  * SUCH DAMAGE.
  */
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include <pthread.h>
-#include <errno.h>
-#include <assert.h>
+
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
+#include <sys/param.h>
 #include <vmm/vmm_api.h>
-#include <acpi.h>
-#include <inout.h>
-#include <pci_emul.h>
-#include <pci_irq.h>
-#include <pci_lpc.h>
+
+#include <assert.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <errno.h>
+#include "acpi.h"
+#include "inout.h"
+#include "pci_emul.h"
+#include "pci_irq.h"
+#include "pci_lpc.h"
 
 /*
  * Implement an 8 pin PCI interrupt router compatible with the router
@@ -55,15 +62,12 @@
 /* IRQ count to disable an IRQ. */
 #define	IRQ_DISABLED	0xff
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 static struct pirq {
 	uint8_t reg;
 	int use_count;
 	int active_count;
 	pthread_mutex_t lock;
 } pirqs[8];
-#pragma clang diagnostic pop
 
 static u_char irq_counts[16];
 static int pirq_cold = 1;
@@ -76,6 +80,7 @@ static int pirq_cold = 1;
 static bool
 pirq_valid_irq(int reg)
 {
+
 	if (reg & PIRQ_DIS)
 		return (false);
 	return (IRQ_PERMITTED(reg & PIRQ_IRQ));
@@ -84,6 +89,7 @@ pirq_valid_irq(int reg)
 uint8_t
 pirq_read(int pin)
 {
+
 	assert((pin > 0) && (((unsigned) pin) <= nitems(pirqs)));
 	return (pirqs[pin - 1].reg);
 }
@@ -109,6 +115,7 @@ pirq_write(int pin, uint8_t val)
 void
 pci_irq_reserve(int irq)
 {
+
 	assert((irq >= 0) && (((unsigned) irq) < nitems(irq_counts)));
 	assert(pirq_cold);
 	assert(irq_counts[irq] == 0 || irq_counts[irq] == IRQ_DISABLED);

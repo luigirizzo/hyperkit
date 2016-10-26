@@ -32,21 +32,25 @@
  * once it has been seeded at bootup.
  */
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <pthread.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <errno.h>
-#include <assert.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
+
 #include <sys/param.h>
-#include <sys/uio.h>
 #include <support/linker_set.h>
+#include <sys/uio.h>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <assert.h>
+#include <pthread.h>
+
 #include <xhyve.h>
-#include <pci_emul.h>
-#include <virtio.h>
+#include "pci_emul.h"
+#include "virtio.h"
 
 #define VTRND_RINGSZ 64
 

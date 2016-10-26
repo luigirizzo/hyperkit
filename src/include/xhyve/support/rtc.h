@@ -37,7 +37,8 @@
  * MC146818 RTC Register locations
  */
 
-#pragma once
+#ifndef	_SUPPORT_RTC_H_
+#define	_SUPPORT_RTC_H_
 
 #define RTC_SEC		0x00	/* seconds */
 #define RTC_SECALRM	0x01	/* seconds alarm */
@@ -109,3 +110,5 @@
 #define RTC_EXTHI	0x18	/* low byte of extended mem size */
 
 #define	RTC_CENTURY	0x32	/* current century */
+
+#endif	/* _SUPPORT_RTC_H_ */

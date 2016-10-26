@@ -94,7 +94,7 @@ struct virtio_net_config {
 	uint8_t  mac[6];
 	uint16_t status;
 	uint16_t max_virtqueue_pairs;
-};
+} __packed;
 
 /*
  * Queue definitions.
@@ -138,7 +138,6 @@ struct pci_vtnet_softc {
 	pthread_cond_t	tx_cond;
 	int		tx_in_progress;
 	struct virtio_net_config vsc_config;
-	uint16_t pad;
 
 };
 
