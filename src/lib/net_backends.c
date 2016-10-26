@@ -31,7 +31,7 @@
  * features) is exported by net_backends.h.
  */
 
-//#define WITH_VMNET
+#define WITH_VMNET
 #define USE_MEVENT 0
 #include <sys/cdefs.h>
 #include <sys/uio.h>
@@ -58,6 +58,7 @@
 
 #include <support/linker_set.h>
 #ifdef WITH_VMNET
+#include <xhyve.h>
 #include <support/uuid.h>
 #include <dispatch/dispatch.h>
 #include <vmnet/vmnet.h>
@@ -872,9 +873,16 @@ DATA_SET(net_backend_s, netmap_backend);
 
 #ifdef WITH_VMNET
 
+
 /* the vmnet backend (ocaml, vmnet) */
 
-static void pci_vtnet_tap_callback(struct pci_vtnet_softc *sc);
+struct vmnet_state {
+	interface_ref iface;
+	unsigned int mtu;
+	unsigned int max_packet_size;
+	uint8_t mac[6];
+	uint8_t pad[2];
+};
 
 /*
  * Create an interface for the guest using Apple's vmnet framework.
@@ -885,9 +893,11 @@ static void pci_vtnet_tap_callback(struct pci_vtnet_softc *sc);
  * See also: https://developer.apple.com/library/mac/documentation/vmnet/Reference/vmnet_Reference/index.html
  */
 static int
-vmnet_init(const char *devname, net_backend_cb_t cb, void *param)
+//vmnet_init(const char *devname, net_backend_cb_t cb, void *param)
+vmnet_init(struct net_backend *be, const char *devname,
+         net_backend_cb_t cb, void *param)
 {
-	struct pci_vtnet_softc *sc;
+	//struct pci_vtnet_softc *sc;
         xpc_object_t interface_desc;
         uuid_t uuid;
         __block interface_ref iface;
@@ -898,6 +908,7 @@ vmnet_init(const char *devname, net_backend_cb_t cb, void *param)
         struct vmnet_state *vms;
         uint32_t uuid_status;
 
+	(void)devname;
         interface_desc = xpc_dictionary_create(NULL, NULL, 0);
         xpc_dictionary_set_uint64(interface_desc, vmnet_operation_mode_key,
                 VMNET_SHARED_MODE);
@@ -935,6 +946,7 @@ vmnet_init(const char *devname, net_backend_cb_t cb, void *param)
                         return;
                 }
 
+		/* XXX should it come from the command line ? */
                 if (sscanf(xpc_dictionary_get_string(interface_param,
                         vmnet_mac_address_key),
                         "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
@@ -963,19 +975,56 @@ vmnet_init(const char *devname, net_backend_cb_t cb, void *param)
         }
 
         vms->iface = iface;
-        sc->vms = vms;
+        be->priv = vms;
 
         if_q = dispatch_queue_create("org.xhyve.vmnet.iface_q", 0);
 
         vmnet_interface_set_event_callback(iface, VMNET_INTERFACE_PACKETS_AVAILABLE,
                 if_q, ^(UNUSED interface_event_t event_id, UNUSED xpc_object_t event)
         {
-                pci_vtnet_tap_callback(sc);
+                cb(be->fd, EVF_READ, param);
         });
 
         return (0);
 }
 
+static int
+vmnet_recv(struct net_backend *be, struct iovec *iov, int iovcnt)
+{
+	struct vmnet_state *vms = be->priv;
+        vmnet_return_t r;
+        struct vmpktdesc v;
+        int pktcnt;
+        int i;
+
+        v.vm_pkt_size = 0;
+
+        for (i = 0; i < iovcnt; i++) {
+                v.vm_pkt_size += iov[i].iov_len;
+        }
+
+        assert(v.vm_pkt_size >= vms->max_packet_size);
+
+        v.vm_pkt_iov = iov;
+        v.vm_pkt_iovcnt = (uint32_t)iovcnt;
+        v.vm_flags = 0; /* TODO no clue what this is */
+
+        pktcnt = 1;
+
+        r = vmnet_read(vms->iface, &v, &pktcnt);
+
+        assert(r == VMNET_SUCCESS);
+
+        if (pktcnt < 1) {
+#if 0
+		if (errno == EWOULDBLOCK)
+			return 0;
+#endif
+                return (-1);
+        }
+
+        return ((int)v.vm_pkt_size);
+}
 
 /*
  * Called to send a buffer chain out to the tap device
@@ -985,6 +1034,10 @@ vmnet_send(struct net_backend *be, struct iovec *iov, int iovcnt, uint32_t len,
 	int more)
 {
 	static char pad[60]; /* all zero bytes */
+        struct vmnet_state *vms = be->priv;
+	vmnet_return_t r;
+	struct vmpktdesc v;
+	int pktcnt;
 
 	(void)more;
 	/*
@@ -998,24 +1051,11 @@ vmnet_send(struct net_backend *be, struct iovec *iov, int iovcnt, uint32_t len,
 		iovcnt++;
 	}
 
-	//return (int)writev(be->fd, iov, iovcnt);
-	// vmn_write(vms, iov, iovcnt);
-#if 0
-	vmnet_return_t r;
-	struct vmpktdesc v;
-	int pktcnt;
-	int i;
+	assert(len <= vms->max_packet_size);
 
-	v.vm_pkt_size = 0;
-
-	for (i = 0; i < n; i++) {
-		v.vm_pkt_size += iov[i].iov_len;
-	}
-
-	assert(v.vm_pkt_size <= vms->max_packet_size);
-
+	v.vm_pkt_size = len;
 	v.vm_pkt_iov = iov;
-	v.vm_pkt_iovcnt = (uint32_t) n;
+	v.vm_pkt_iovcnt = (uint32_t)iovcnt;
 	v.vm_flags = 0; /* TODO no clue what this is */
 
 	pktcnt = 1;
@@ -1023,13 +1063,13 @@ vmnet_send(struct net_backend *be, struct iovec *iov, int iovcnt, uint32_t len,
 	r = vmnet_write(vms->iface, &v, &pktcnt);
 
 	assert(r == VMNET_SUCCESS);
-#endif
+	return (int)len; /* success */
 }
 
 static struct net_backend vmnet_backend = {
 	.name = "vmnet",
 	.init = vmnet_init,
-	.cleanup = vmnet_cleanup,
+	.cleanup = NULL, // XXX vmnet_cleanup,
 	.send = vmnet_send,
 	.recv = vmnet_recv,
 	.get_cap = netbe_get_cap,
