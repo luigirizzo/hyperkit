@@ -139,6 +139,7 @@ struct pci_vtnet_softc {
 	int		tx_in_progress;
 	struct virtio_net_config vsc_config;
 	uint16_t pad;
+
 };
 
 static void pci_vtnet_reset(void *);
@@ -264,7 +265,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 		n = vq_getchain(vq, &idx, iov, VTNET_MAXSEGS, NULL);
 		assert(n >= 1 && n <= VTNET_MAXSEGS);
 
-		len = netbe_recv(sc->vsc_be, iov, n); // XXX can return -1
+		len = netbe_recv(sc->vsc_be, iov, n);
 
 		if (len < 0) {
 			break;
@@ -281,8 +282,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 		}
 
 		/* Publish the info to the guest */
-		// XXX check why we add rx_vhdrlen
-		vq_relchain(vq, idx, (uint32_t)len + sc->rx_vhdrlen);
+		vq_relchain(vq, idx, (uint32_t)len);
 	} while (vq_has_descs(vq));
 
 	/* Interrupt if needed, including for NOTIFY_ON_EMPTY. */
@@ -376,7 +376,14 @@ pci_vtnet_tx_thread(void *param)
 	struct vqueue_info *vq;
 	int error;
 
-	pthread_setname_np("vtnet-tx");
+	{
+		struct pci_devinst *pi = sc->vsc_vs.vs_pi;
+		char tname[MAXCOMLEN + 1];
+		snprintf(tname, sizeof(tname), "vtnet-%d:%d tx", pi->pi_slot,
+				pi->pi_func);
+		pthread_setname_np(tname);
+	}
+
 	vq = &sc->vsc_queues[VTNET_TXQ];
 
 	/*
@@ -433,7 +440,6 @@ pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 static int
 pci_vtnet_init(/* struct vmctx *ctx, */ struct pci_devinst *pi, char *opts)
 {
-	char tname[MAXCOMLEN + 1];
 	struct pci_vtnet_softc *sc;
 	char *devname;
 	char *vtopts;
@@ -452,10 +458,6 @@ pci_vtnet_init(/* struct vmctx *ctx, */ struct pci_devinst *pi, char *opts)
 	memcpy(vc, &vtnet_vi_consts, sizeof(*vc));
 
 	pthread_mutex_init(&sc->vsc_mtx, NULL);
-
-	// XXX can we move vi_softc_linkup before vi_intr_init ?
-	vi_softc_linkup(&sc->vsc_vs, vc, sc, pi, sc->vsc_queues);
-	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
 
 	sc->vsc_queues[VTNET_RXQ].vq_qsize = VTNET_RINGSZ;
 	sc->vsc_queues[VTNET_RXQ].vq_notify = pci_vtnet_ping_rxq;
@@ -510,6 +512,9 @@ pci_vtnet_init(/* struct vmctx *ctx, */ struct pci_devinst *pi, char *opts)
 	/* Link is up if we managed to open backend device. */
 	sc->vsc_config.status = (opts == NULL || sc->vsc_be);
 	
+	vi_softc_linkup(&sc->vsc_vs, vc, sc, pi, sc->vsc_queues);
+	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
+
 	/* use BAR 1 to map MSI-X table and PBA, if we're using MSI-X */
 	if (vi_intr_init(&sc->vsc_vs, 1, fbsdrun_virtio_msix()))
 		return (1);
@@ -532,9 +537,6 @@ pci_vtnet_init(/* struct vmctx *ctx, */ struct pci_devinst *pi, char *opts)
 	pthread_mutex_init(&sc->tx_mtx, NULL);
 	pthread_cond_init(&sc->tx_cond, NULL);
 	pthread_create(&sc->tx_tid, NULL, pci_vtnet_tx_thread, (void *)sc);
-	snprintf(tname, sizeof(tname), "vtnet-%d:%d tx", pi->pi_slot,
-	    pi->pi_func);
-//        pthread_setname_np(sc->tx_tid, tname);
 
 	return (0);
 }

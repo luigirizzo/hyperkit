@@ -56,13 +56,14 @@
 #include "mevent.h"
 #include "net_backends.h"
 
-#include <support/linker_set.h>
 #ifdef WITH_VMNET
 #include <xhyve.h>
 #include <support/uuid.h>
 #include <dispatch/dispatch.h>
 #include <vmnet/vmnet.h>
 #endif /* WITH_VMNET */
+
+#include <support/linker_set.h>
 
 /*
  * Each network backend registers a set of function pointers that are
@@ -893,99 +894,98 @@ struct vmnet_state {
  * See also: https://developer.apple.com/library/mac/documentation/vmnet/Reference/vmnet_Reference/index.html
  */
 static int
-//vmnet_init(const char *devname, net_backend_cb_t cb, void *param)
 vmnet_init(struct net_backend *be, const char *devname,
          net_backend_cb_t cb, void *param)
 {
 	//struct pci_vtnet_softc *sc;
-        xpc_object_t interface_desc;
-        uuid_t uuid;
-        __block interface_ref iface;
-        __block vmnet_return_t iface_status;
-        dispatch_semaphore_t iface_created;
-        dispatch_queue_t if_create_q;
-        dispatch_queue_t if_q;
-        struct vmnet_state *vms;
-        uint32_t uuid_status;
+	xpc_object_t interface_desc;
+	uuid_t uuid;
+	__block interface_ref iface;
+	__block vmnet_return_t iface_status;
+	dispatch_semaphore_t iface_created;
+	dispatch_queue_t if_create_q;
+	dispatch_queue_t if_q;
+	struct vmnet_state *vms;
+	uint32_t uuid_status;
 
 	(void)devname;
-        interface_desc = xpc_dictionary_create(NULL, NULL, 0);
-        xpc_dictionary_set_uint64(interface_desc, vmnet_operation_mode_key,
-                VMNET_SHARED_MODE);
+	interface_desc = xpc_dictionary_create(NULL, NULL, 0);
+	xpc_dictionary_set_uint64(interface_desc, vmnet_operation_mode_key,
+		VMNET_SHARED_MODE);
 
-        if (guest_uuid_str != NULL) {
-                uuid_from_string(guest_uuid_str, &uuid, &uuid_status);
-                if (uuid_status != uuid_s_ok) {
-                        return (-1);
-                }
-        } else {
-                uuid_generate_random(uuid);
-        }
+	if (guest_uuid_str != NULL) {
+		uuid_from_string(guest_uuid_str, &uuid, &uuid_status);
+		if (uuid_status != uuid_s_ok) {
+			return (-1);
+		}
+	} else {
+		uuid_generate_random(uuid);
+	}
 
-        xpc_dictionary_set_uuid(interface_desc, vmnet_interface_id_key, uuid);
-        iface = NULL;
-        iface_status = 0;
+	xpc_dictionary_set_uuid(interface_desc, vmnet_interface_id_key, uuid);
+	iface = NULL;
+	iface_status = 0;
 
-        vms = malloc(sizeof(struct vmnet_state));
+	vms = malloc(sizeof(struct vmnet_state));
 
-        if (!vms) {
-                return (-1);
-        }
+	if (!vms) {
+	return (-1);
+	}
 
-        if_create_q = dispatch_queue_create("org.xhyve.vmnet.create",
-                DISPATCH_QUEUE_SERIAL);
+	if_create_q = dispatch_queue_create("org.xhyve.vmnet.create",
+		DISPATCH_QUEUE_SERIAL);
 
-        iface_created = dispatch_semaphore_create(0);
+	iface_created = dispatch_semaphore_create(0);
 
-        iface = vmnet_start_interface(interface_desc, if_create_q,
-                ^(vmnet_return_t status, xpc_object_t interface_param)
-        {
-                iface_status = status;
-                if (status != VMNET_SUCCESS || !interface_param) {
-                        dispatch_semaphore_signal(iface_created);
-                        return;
-                }
+	iface = vmnet_start_interface(interface_desc, if_create_q,
+		^(vmnet_return_t status, xpc_object_t interface_param)
+		{
+			iface_status = status;
 
-		/* XXX should it come from the command line ? */
-                if (sscanf(xpc_dictionary_get_string(interface_param,
-                        vmnet_mac_address_key),
-                        "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
-                        &vms->mac[0], &vms->mac[1], &vms->mac[2], &vms->mac[3],
-                        &vms->mac[4], &vms->mac[5]) != 6)
-                {
-                        assert(0);
-                }
+			if (status != VMNET_SUCCESS || !interface_param) {
+				dispatch_semaphore_signal(iface_created);
+				return;
+			}
 
-                vms->mtu = (unsigned)
-                        xpc_dictionary_get_uint64(interface_param, vmnet_mtu_key);
-                vms->max_packet_size = (unsigned)
-                        xpc_dictionary_get_uint64(interface_param,
-                                vmnet_max_packet_size_key);
-                dispatch_semaphore_signal(iface_created);
-        });
+			/* XXX should it come from the command line ? */
+			if (sscanf(xpc_dictionary_get_string(interface_param,
+					vmnet_mac_address_key),
+					"%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+					&vms->mac[0], &vms->mac[1], &vms->mac[2], &vms->mac[3],
+					&vms->mac[4], &vms->mac[5]) != 6) {
+				assert(0);
+			}
 
-        dispatch_semaphore_wait(iface_created, DISPATCH_TIME_FOREVER);
-        dispatch_release(if_create_q);
+			vms->mtu = (unsigned)
+				xpc_dictionary_get_uint64(interface_param, vmnet_mtu_key);
+			vms->max_packet_size = (unsigned)
+				xpc_dictionary_get_uint64(interface_param,
+					vmnet_max_packet_size_key);
+			dispatch_semaphore_signal(iface_created);
+		});
 
-        if (iface == NULL || iface_status != VMNET_SUCCESS) {
-                printf("virtio_net: Could not create vmnet interface, "
-                        "permission denied or no entitlement?\n");
-                free(vms);
-                return (-1);
-        }
+	dispatch_semaphore_wait(iface_created, DISPATCH_TIME_FOREVER);
+	dispatch_release(if_create_q);
 
-        vms->iface = iface;
-        be->priv = vms;
+	if (iface == NULL || iface_status != VMNET_SUCCESS) {
+		printf("virtio_net: Could not create vmnet interface, "
+			"permission denied or no entitlement?\n");
+		free(vms);
+		return (-1);
+	}
 
-        if_q = dispatch_queue_create("org.xhyve.vmnet.iface_q", 0);
+	vms->iface = iface;
+	be->priv = vms;
 
-        vmnet_interface_set_event_callback(iface, VMNET_INTERFACE_PACKETS_AVAILABLE,
-                if_q, ^(UNUSED interface_event_t event_id, UNUSED xpc_object_t event)
-        {
-                cb(be->fd, EVF_READ, param);
-        });
+	if_q = dispatch_queue_create("org.xhyve.vmnet.iface_q", 0);
 
-        return (0);
+	vmnet_interface_set_event_callback(iface, VMNET_INTERFACE_PACKETS_AVAILABLE,
+		if_q, ^(UNUSED interface_event_t event_id, UNUSED xpc_object_t event)
+		{
+			cb(be->fd, EVF_READ, param);
+		});
+
+	return (0);
 }
 
 static int
@@ -1159,7 +1159,7 @@ netbe_name_match(const char *keys, const char *name)
 struct net_backend *
 netbe_init(const char *devname, net_backend_cb_t cb, void *param)
 {
-	struct net_backend **pbe, *ret, *be = NULL;
+	struct net_backend **pbe, *be, *tbe = NULL;
 	int err;
 
 	/*
@@ -1168,29 +1168,28 @@ netbe_init(const char *devname, net_backend_cb_t cb, void *param)
 	 */
 	SET_FOREACH(pbe, net_backend_s) {
 		if (netbe_name_match((*pbe)->name, devname)) {
-			fprintf(stderr, "--- match backend %s ---\n", (*pbe)->name);
-			be = *pbe;
+			tbe = *pbe;
 			break;
 		}
 	}
-	if (be == NULL)
+	if (tbe == NULL)
 		return NULL; /* or null backend ? */
-	ret = calloc(1, sizeof(*ret));
-	*ret = *be;	/* copy the template */
-	netbe_fix(ret); /* make sure we have all fields */
-	ret->fd = -1;
-	ret->priv = NULL;
-	ret->sc = param;
-	ret->be_vnet_hdr_len = 0;
-	ret->fe_vnet_hdr_len = 0;
+	be = calloc(1, sizeof(*be));
+	*be = *tbe;	/* copy the template */
+	netbe_fix(be); /* make sure we have all fields */
+	be->fd = -1;
+	be->priv = NULL;
+	be->sc = param;
+	be->be_vnet_hdr_len = 0;
+	be->fe_vnet_hdr_len = 0;
 
 	/* initialize the backend */
-	err = ret->init(ret, devname, cb, param);
+	err = be->init(be, devname, cb, param);
 	if (err) {
-		free(ret);
-		ret = NULL;
+		free(be);
+		be = NULL;
 	}
-	return ret;
+	return be;
 }
 
 void
@@ -1280,7 +1279,7 @@ netbe_send(struct net_backend *be, struct iovec *iov, int iovcnt, uint32_t len,
 int
 netbe_recv(struct net_backend *be, struct iovec *iov, int iovcnt)
 {
-	unsigned int hlen = 0;
+	unsigned int hlen = 0; /* length of prepended virtio-net header */
 	int ret;
 
 	if (be == NULL)
