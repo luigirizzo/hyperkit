@@ -83,9 +83,6 @@
 
 #define ETHER_IS_MULTICAST(addr) (*(addr) & 0x01) /* is address mcast/bcast? */
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpacked"
-
 /*
  * PCI config-space "registers"
  */
@@ -115,8 +112,6 @@ struct virtio_net_rxhdr {
 	uint16_t vrh_bufs;
 } __packed;
 
-#pragma clang diagnostic pop
-
 /*
  * Debug printf
  */
@@ -124,8 +119,6 @@ static int pci_vtnet_debug;
 #define DPRINTF(params) if (pci_vtnet_debug) printf params
 #define WPRINTF(params) printf params
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 /*
  * Per-device softc
  */
@@ -148,7 +141,6 @@ struct pci_vtnet_softc {
 	pthread_cond_t tx_cond;
 	int tx_in_progress;
 };
-#pragma clang diagnostic pop
 
 static void pci_vtnet_reset(void *);
 /* static void pci_vtnet_notify(void *, struct vqueue_info *); */

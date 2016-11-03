@@ -38,8 +38,6 @@
 #include <xhyve.h>
 #include <smbiostbl.h>
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpacked"
 
 #define	GB (1024ULL*1024*1024)
 
@@ -300,7 +298,6 @@ struct smbios_table_type127 {
 	struct smbios_structure	header;
 } __packed;
 
-#pragma clang diagnostic pop
 
 static struct smbios_table_type0 smbios_type0_template = {
 	{ SMBIOS_TYPE_BIOS, sizeof (struct smbios_table_type0), 0 },

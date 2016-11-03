@@ -42,8 +42,6 @@ enum busTypes {
     UNKNOWN_BUSTYPE = 0xff
 };
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpacked"
 
 /* MP Floating Pointer Structure */
 typedef struct MPFPS {
@@ -190,4 +188,3 @@ typedef struct CBASMENTRY {
 #define	CBASMENTRY_RANGE_ISA_IO		0
 #define	CBASMENTRY_RANGE_VGA_IO		1
 
-#pragma clang diagnostic pop

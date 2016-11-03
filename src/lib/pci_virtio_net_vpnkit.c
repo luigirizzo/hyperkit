@@ -85,8 +85,6 @@
 /*
  * wire protocol
  */
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpacked"
 struct msg_init {
 	uint8_t magic[5]; /* VMN3T */
 	uint32_t version;
@@ -108,7 +106,6 @@ struct vif_info {
 	uint16_t max_packet_size;
 	uint8_t mac[6];
 } __packed;
-#pragma clang diagnostic pop
 
 /*
  * Host capabilities.  Note that we only offer a few of these.
@@ -138,8 +135,6 @@ struct vif_info {
 
 // #define ETHER_IS_MULTICAST(addr) (*(addr) & 0x01) /* is address mcast/bcast? */
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpacked"
 
 /*
  * PCI config-space "registers"
@@ -170,7 +165,6 @@ struct virtio_net_rxhdr {
 	uint16_t vrh_bufs;
 } __packed;
 
-#pragma clang diagnostic pop
 
 /*
  * Debug printf
@@ -178,8 +172,6 @@ struct virtio_net_rxhdr {
 static int pci_vtnet_debug;
 #define DPRINTF(params) if (pci_vtnet_debug) printf params
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 /*
  * Per-device softc
  */
@@ -225,7 +217,6 @@ struct vpnkit_state {
 	struct vif_info vif;
 };
 
-#pragma clang diagnostic pop
 
 static int really_read(int fd, uint8_t *buffer, size_t total)
 {

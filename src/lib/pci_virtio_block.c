@@ -73,8 +73,6 @@
 	 VTBLK_F_TOPOLOGY | \
 	 VIRTIO_RING_F_INDIRECT_DESC) /* indirect descriptors */
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpacked"
 /*
  * Config space "registers"
  */
@@ -112,7 +110,6 @@ struct virtio_blk_hdr {
 	uint64_t vbh_sector;
 } __packed;
 
-#pragma clang diagnostic pop
 
 /*
  * Debug printf
@@ -120,8 +117,6 @@ struct virtio_blk_hdr {
 static int pci_vtblk_debug;
 #define DPRINTF(params) if (pci_vtblk_debug) printf params
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 struct pci_vtblk_ioreq {
 	struct blockif_req io_req;
 	struct pci_vtblk_softc *io_sc;
@@ -142,7 +137,6 @@ struct pci_vtblk_softc {
 	struct pci_vtblk_ioreq vbsc_ios[VTBLK_RINGSZ];
 };
 
-#pragma clang diagnostic pop
 
 static void pci_vtblk_reset(void *);
 static void pci_vtblk_notify(void *, struct vqueue_info *);

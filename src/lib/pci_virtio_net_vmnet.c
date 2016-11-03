@@ -105,8 +105,6 @@
 
 // #define ETHER_IS_MULTICAST(addr) (*(addr) & 0x01) /* is address mcast/bcast? */
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpacked"
 
 /*
  * PCI config-space "registers"
@@ -137,16 +135,12 @@ struct virtio_net_rxhdr {
 	uint16_t vrh_bufs;
 } __packed;
 
-#pragma clang diagnostic pop
-
 /*
  * Debug printf
  */
 static int pci_vtnet_debug;
 #define DPRINTF(params) if (pci_vtnet_debug) printf params
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpadded"
 /*
  * Per-device softc
  */
@@ -194,7 +188,6 @@ struct vmnet_state {
 	unsigned int max_packet_size;
 };
 
-#pragma clang diagnostic pop
 
 static void pci_vtnet_tap_callback(struct pci_vtnet_softc *sc);
 
